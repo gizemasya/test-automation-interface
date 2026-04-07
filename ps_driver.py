@@ -4,7 +4,6 @@ import time
 class PowerSupplyDriver:
     """
     Agilent E3632A DC Power Supply (SCPI via Serial Port) Sürücüsü
-    Görseldeki SCPI komut setine göre güncellenmiştir.
     """
     def __init__(self, port, baudrate=9600, simulate=False):
         self.port = port
