@@ -1,0 +1,318 @@
+{
+  "schema_version": "2.1.0",
+  "metadata": {
+    "execution": {
+      "job": {
+        "job_id": "KT_KT-400_20260407_1430",
+        "project_key": "KT",
+        "generated_at": "2026-04-07T14:30:00.000000",
+        "run_dir": "C:\\Users\\wsluser\\Documents\\00_Projects\\00_Test\\jira\\api - intranet\\TestRuns\\KT_KT-400_20260407_1430",
+        "export_dir": "export",
+        "attachments_dir": "attachments",
+        "evidences_dir": "evidences",
+        "html_report_dir": "html_report",
+        "metadata_dir": "metadata",
+        "execution_filter": [
+          "KT-400"
+        ]
+      },
+      "inputs_template": {
+        "software_versions": {},
+        "hardware": {},
+        "environment": "",
+        "dataset": "",
+        "parameters": {}
+      },
+      "executions": [
+        {
+          "execution": {
+            "issue_id": "608000",
+            "issue_key": "KT-400",
+            "issuetype": "Test Execution",
+            "summary": "Test Execution for Test Plan KT-390: RF Frekans Yanıtı",
+            "description": "DUT'un 2.4 GHz ISM bandındaki (2400-2500 MHz) frekans yanıtının ve RF kazanç düzlüğünün doğrulanması.",
+            "status": "In Progress",
+            "priority": "High",
+            "reporter": "Test Muhendisi",
+            "assignee": "Test Muhendisi",
+            "environment": "Cihaz Unit Bilgileri:\nCihaz_Adi: LNA-Modul-X\nConfig: v1.0\nSeri_No: SN-2026-001\nHardware: HW-Rev2\nSoftware: FW-v1.4",
+            "labels": ["RF", "Sweep", "Otomasyon"],
+            "components": ["RF Front-End"],
+            "fix_versions": [],
+            "custom_fields": {}
+          },
+          "execution_key": "KT-400",
+          "execution_id": "608000",
+          "execution_inputs": {
+            "environment": "",
+            "dataset": "",
+            "software_versions": {},
+            "parameters": {}
+          },
+          "attachments": [],
+          "test_plans": [
+            {
+              "issue_id": "608001",
+              "issue_key": "KT-390",
+              "issuetype": "Test Plan",
+              "summary": "RF Frekans Yanıtı ve Kazanç Düzlüğü Test Planı",
+              "description": "Sinyal Jeneratörü ve Spektrum Analizör ile DUT kazancının ölçülmesi.",
+              "status": "In Progress",
+              "priority": "High",
+              "reporter": "Test Muhendisi",
+              "assignee": "Test Muhendisi",
+              "environment": "",
+              "labels": [],
+              "components": [],
+              "fix_versions": [],
+              "custom_fields": {},
+              "attachments": []
+            }
+          ],
+          "tests": [
+            {
+              "issue_id": "608002",
+              "issue_key": "KT-395",
+              "issuetype": "Test",
+              "summary": "2.4 GHz Bandı Sweep Kazanç Testi",
+              "description": "h2. 1.1 Amaç\n\nBu testin amacı; DUT'un 2400 MHz ile 2500 MHz arasında sinyal jeneratörü ile süpürülmesi (sweep) ve spektrum analizör ile elde edilen çıkış gücünün ölçülerek, band içerisindeki kazanç düzlüğünün (gain flatness) doğrulanmasıdır.",
+              "status": "Open",
+              "priority": "High",
+              "reporter": "Test Muhendisi",
+              "assignee": "Test Muhendisi",
+              "environment": {
+                "spec_limit": {
+                  "id": 2,
+                  "test_step_def_id": 102,
+                  "limit_name": "Gain_Flatness_Check",
+                  "limit_type": "PassFail",
+                  "nominal_value": 15.0,
+                  "min_value": 13.0,
+                  "max_value": 17.0,
+                  "tolerance_value": 2.0,
+                  "tolerance_unit": "dB",
+                  "unit": "dBm"
+                }
+              },
+              "labels": [],
+              "components": [],
+              "fix_versions": [],
+              "custom_fields": {},
+              "steps": [
+                {
+                  "index": 1,
+                  "action": "Güç Kaynağı panelinden bağlantıyı gerçekleştirin.\nVoltaj: 12.0 V, Akım: 2.0 A girin ve 'SET DEĞERLERİ GÖNDER' butonuna basın.\n'OUTPUT ON' butonuna basarak cihaza güç verin.",
+                  "data": "12.0 V, 2.0 A",
+                  "expected_result": "Güç kaynağının açıldığı ve panelde anlık voltaj/akım değerlerinin (yaklaşık 12V ve cihazın çektiği akım) görüldüğü teyit edilmelidir.",
+                  "attachments": []
+                },
+                {
+                  "index": 2,
+                  "action": "Spektrum Analizör panelinden bağlantıyı gerçekleştirin.\nCenter Freq: 2450 MHz, Span: 150 MHz, RBW: 100 kHz ayarlayın.\n'SÜREKLİ ÖLÇÜM' butonuna basarak ölçümü başlatın.",
+                  "data": "Center: 2450, Span: 150, RBW: 100",
+                  "expected_result": "Grafik ekranında spektrum gürültü tabanının ve merkez frekansın güncellendiği görülmelidir.",
+                  "attachments": []
+                },
+                {
+                  "index": 3,
+                  "action": "Sinyal Jeneratörü panelinden 'Sweep' modunu seçin.\nBaşlangıç: 2400 MHz, Bitiş: 2500 MHz, Adım: 10 MHz, Bekleme: 0.5 s, Güç: -10 dBm olarak ayarlayın.\n'BAŞLAT' butonuna basın.",
+                  "data": "Start: 2400, Stop: 2500, Step: 10, Power: -10 dBm",
+                  "expected_result": "Jeneratörün adım adım frekans taraması yaptığı log ekranında görülmeli ve grafik ekranında hareket eden mavi dikey çizgi (GEN marker) ile kırmızı sinyal tepeleri (Peak) izlenmelidir.",
+                  "attachments": []
+                },
+                {
+                  "index": 4,
+                  "action": "Sweep işlemi tamamlanana (DURDUR butonu tekrar BAŞLAT olana) kadar bekleyin.\nİşlem bitince Grafik sekmesinden 'VERİYİ CSV KAYDET' butonuna tıklayın.",
+                  "data": "",
+                  "expected_result": "Otomatik oluşturulan grafik verisi CSV dosyasının başarıyla kaydedildiğine dair uyarı alınmalıdır.",
+                  "attachments": []
+                },
+                {
+                  "index": 5,
+                  "action": "Tüm ölçüm tamamlandığında Genel Kontrol bölümünden 'LOG CSV KAYDET' diyerek test loglarını kayıt altına alın.\nArdından Güç Kaynağı panelinden 'OUTPUT OFF' a tıklayarak testi sonlandırın.",
+                  "data": "",
+                  "expected_result": "Log verileri gün ve saat damgalı olarak diske kaydedilmeli ve DUT'un gücü kesilmelidir.",
+                  "attachments": []
+                }
+              ],
+              "attachments": [],
+              "preconditions": [
+                {
+                  "issue_id": "608003",
+                  "issue_key": "KT-391",
+                  "condition": "Cihaz (DUT) ile Güç Kaynağı arasındaki besleme kabloları bağlandı mı?\nSinyal Jeneratörü DUT girişine, DUT çıkışı da Spektrum Analizöre uygun RF kabloları ile bağlandı mı?\nAraya gerekli zayıflatıcılar (Attenuator) eklendi mi?"
+                },
+                {
+                  "issue_id": "608004",
+                  "issue_key": "KT-392",
+                  "condition": [
+                    {
+                      "id": 201,
+                      "equipment_code": "EQ-PS-012",
+                      "equipment_name": "Power Supply",
+                      "manufacturer": "Rigol",
+                      "model": "DP832A"
+                    },
+                    {
+                      "id": 202,
+                      "equipment_code": "EQ-SG-005",
+                      "equipment_name": "Signal Generator",
+                      "manufacturer": "Rohde & Schwarz",
+                      "model": "SMB100A"
+                    },
+                    {
+                      "id": 203,
+                      "equipment_code": "EQ-SA-008",
+                      "equipment_name": "Spectrum Analyzer",
+                      "manufacturer": "Keysight",
+                      "model": "N9020B"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "runs": [],
+          "results_template": []
+        }
+      ]
+    },
+    "technical": {
+      "rapor_metadata": {
+        "rapor_id": "",
+        "rapor_turu": "",
+        "rapor_basligi": "",
+        "rapor_versiyonu": "",
+        "rapor_olusturma_tarihi_saat_utc": "",
+        "rapor_durumu": "",
+        "read_only": false,
+        "test_adi": "2.4 GHz Bandı Sweep Kazanç Testi",
+        "test_kodu": "KT-395",
+        "ana_test_talimat_ref": "DOC-RF-001",
+        "alt_test_operasyon_talimat_ref": [],
+        "otomatik_talimat_id": ""
+      },
+      "proje_urun_metadata": {
+        "proje_adi_kodu": "PRJ-WIFI-AMP",
+        "urun_sistem_adi": "WIFI-FrontEnd",
+        "alt_sistem_kart_modul_adi": "LNA-Modul-X",
+        "urun_konfigurasyonu": "v1.0",
+        "donanim_revizyonu": "HW-Rev2",
+        "yazilim_firmware_versiyonu": {
+          "sw": "FW-v1.4",
+          "fw": "FW-v1.4"
+        },
+        "dut_seri_numarasi": "SN-2026-001",
+        "uretici": "Lab",
+        "sku": "",
+        "uretim_parti": "Batch-001",
+        "uretim_tarihi": "2026-04-01"
+      },
+      "test_ortami_metadata": {
+        "test_lokasyonu": "RF Lab 1",
+        "ortam_sicakligi_c": 24.5,
+        "ortam_nemi_percent": 45.0,
+        "emi_rf_ortam_notu": "Ekranlı oda (Faraday Cage) kullanıldı.",
+        "test_tarihi": {
+          "baslangic_utc": "",
+          "bitis_utc": "",
+          "sure_dakika": null
+        },
+        "test_seviyesi": "Modül",
+        "test_ortam_tipi": "Laboratuvar",
+        "operator": "Test Muhendisi"
+      },
+      "dut_durumu_onkosul_metadata": {
+        "dut_calisma_modu": "Aktif/Amplifikasyon",
+        "agc_kazanc_durumu": "Sabit",
+        "hedef_cikis_gucu_dbm": 5.0,
+        "yuklenen_att_tablosu": "Bypass",
+        "dut_yazilim_versiyonu": "FW-v1.4",
+        "dut_tarih": "2026-04-07",
+        "test_onkosul_durumu": "Saglandi",
+        "precheck_list": ["Kablo baglantilari", "Guc Kaynagi Testi"],
+        "ek_notlar": ""
+      },
+      "olcum_cihazlari_metadata": {
+        "cihaz_listesi": []
+      },
+      "test_parametre_metadata": {
+        "test_frekanslari_mhz": [],
+        "frekans_araligi_mhz": {
+          "baslangic": 2400.0,
+          "bitis": 2500.0,
+          "adim": 10.0
+        },
+        "jenerator_cikis_gucu_dbm": -10.0,
+        "rbw_hz": 100000,
+        "vbw_hz": 300000,
+        "if_bw_hz": null,
+        "averaging": 1,
+        "olcum_modu": "Sweep",
+        "sweep_ayarlari": {
+          "sweep_time_ms": null,
+          "points": 501
+        },
+        "dwell_time_ms": 500,
+        "limit_seti_versiyonu": "v1.1"
+      },
+      "test_sonuc_metadata_ozet": {
+        "olculen_parametreler": ["Cikis_Gucu", "Kazanc_Duzlugu"],
+        "min_max_ortalama": {},
+        "limitler": {},
+        "sonuc": "",
+        "degerlendirme_notu": ""
+      },
+      "izlenebilirlik_rtm_metadata": {
+        "gereksinim_idleri": ["REQ-RF-015", "REQ-RF-016"],
+        "test_talimat_id": "KT-395",
+        "sapma_deviation_idleri": [],
+        "kapsam": "Sistem Seviyesi Doğrulama"
+      },
+      "onay_sorumluluk_metadata": {
+        "testi_yapan": {
+          "ad": "Test Muhendisi",
+          "rol": "Test Muhendisi"
+        },
+        "kontrol_eden": {
+          "ad": "",
+          "rol": ""
+        },
+        "onaylayan": {
+          "ad": "",
+          "rol": ""
+        },
+        "onay_tarihi": ""
+      },
+      "otomasyon_yazilim_metadata": {
+        "test_motoru_versiyonu": "PyQt6 ATE POD v1.0",
+        "otomasyon_yazilimi_versiyonu": "v1.0",
+        "cli_ui_kullanim_bilgisi": "UI Modu",
+        "parametre_dosyasi_versiyonu": "1.0",
+        "script_test_case_id": "TC-SWEEP-001",
+        "script_adi": "main.py",
+        "repo_commit": "",
+        "ci_build_id": ""
+      }
+    },
+    "required_fields": [
+      "technical.proje_urun_metadata.dut_seri_numarasi",
+      "technical.proje_urun_metadata.donanim_revizyonu",
+      "technical.proje_urun_metadata.yazilim_firmware_versiyonu",
+      "technical.proje_urun_metadata.uretim_parti",
+      "technical.test_ortami_metadata.test_lokasyonu",
+      "technical.test_ortami_metadata.ortam_sicakligi_c",
+      "technical.test_ortami_metadata.ortam_nemi_percent",
+      "technical.test_ortami_metadata.emi_rf_ortam_notu",
+      "technical.dut_durumu_onkosul_metadata.precheck_list",
+      "technical.dut_durumu_onkosul_metadata.dut_calisma_modu",
+      "technical.dut_durumu_onkosul_metadata.agc_kazanc_durumu",
+      "technical.dut_durumu_onkosul_metadata.yuklenen_att_tablosu",
+      "technical.olcum_cihazlari_metadata.cihaz_listesi",
+      "technical.test_parametre_metadata.frekans_araligi_mhz",
+      "technical.test_parametre_metadata.limit_seti_versiyonu",
+      "technical.izlenebilirlik_rtm_metadata.gereksinim_idleri",
+      "technical.izlenebilirlik_rtm_metadata.test_talimat_id"
+    ]
+  }
+}

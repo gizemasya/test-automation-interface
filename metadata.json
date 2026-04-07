@@ -1,0 +1,441 @@
+{
+  "schema_version": "2.1.0",
+  "metadata": {
+    "execution": {
+      "job": {
+        "job_id": "KT_KT-331_20260203_1636",
+        "project_key": "KT",
+        "generated_at": "2026-02-03T16:36:15.031370",
+        "run_dir": "C:\\Users\\wsluser\\Documents\\00_Projects\\00_Test\\jira\\api - intranet\\TestRuns\\KT_KT-331_20260203_1636",
+        "export_dir": "export",
+        "attachments_dir": "attachments",
+        "evidences_dir": "evidences",
+        "html_report_dir": "html_report",
+        "metadata_dir": "metadata",
+        "execution_filter": [
+          "KT-331"
+        ]
+      },
+      "inputs_template": {
+        "software_versions": {},
+        "hardware": {},
+        "environment": "",
+        "dataset": "",
+        "parameters": {}
+      },
+      "executions": [
+        {
+          "execution": {
+            "issue_id": "607558",
+            "issue_key": "KT-331",
+            "issuetype": "Test Execution",
+            "summary": "Test Execution for Test Plan KT-327",
+            "description": "Kazanc Test Planı ATT Tablosunun olusturulması ve onaylanması",
+            "status": "In Progress",
+            "priority": "Medium",
+            "reporter": "Bekir ÖZTÜRK",
+            "assignee": "Bekir ÖZTÜRK",
+            "environment": "Cihaz Unit Bilgileri:\nCihaz_Adi: Abuzer\nConfig: 12.2.23.2\nAlt_Sistem_Modul: EFT123\nSeri_No: 1231.321.31.12313\nHardware: 1232.2.21\nSoftware: 213.2.23\nbootloader_xx_ver: 12.2.3.211\nfirmware_xx_ver: 12.3.2.3.2\nbootloader_yy_ver: 2.2.3.211\nfirmware_yy_ver: 132.3.2.3.2",
+            "labels": [],
+            "components": [],
+            "fix_versions": [],
+            "custom_fields": {}
+          },
+          "execution_key": "KT-331",
+          "execution_id": "607558",
+          "execution_inputs": {
+            "environment": "",
+            "dataset": "",
+            "software_versions": {},
+            "parameters": {}
+          },
+          "attachments": [],
+          "test_plans": [
+            {
+              "issue_id": "606204",
+              "issue_key": "KT-327",
+              "issuetype": "Test Plan",
+              "summary": "RF Kazanc Test Planı",
+              "description": "Kazanc Test Planı ATT Tablosunun olusturulması ve onaylanması",
+              "status": "In Progress",
+              "priority": "Medium",
+              "reporter": "Bekir ÖZTÜRK",
+              "assignee": "Bekir ÖZTÜRK",
+              "environment": "",
+              "labels": [],
+              "components": [],
+              "fix_versions": [],
+              "custom_fields": {},
+              "attachments": []
+            }
+          ],
+          "tests": [
+            {
+              "issue_id": "606186",
+              "issue_key": "KT-323",
+              "issuetype": "Test",
+              "summary": "RF Kazanc",
+              "description": "h2. 1.1 Amaç\n\nBu ana talimatın amacı; RF sisteminin veya alt sistemlerinin, tanımlı frekans bandı boyunca *attenuator (ATT) ve kazanç kontrol mekanizmaları kullanılarak hedeflenen çıkış gücünü sağlayabilme yeteneğini* doğrulamak için uygulanacak kazanç testlerine ait genel yaklaşımı, kuralları ve bağlı alt test prosedürlerini tanımlamaktır.\n\nKazanç doğrulaması kapsamında;\n * frekansa bağlı seviyeleme davranışı,\n * hedef çıkış gücünden sapmalar,\n * kazanç tutarlılığı\n\ndeğerlendirilir.\n\nBu talimat kapsamında yapılan kazanç testleri *lineerlik (P1dB/IP3) doğrulaması değildir* ve ürün kabul kriteri oluşturmaz; ilgili lineerlik testleri ayrı ana talimatlar altında ele alınır.",
+              "status": "Open",
+              "priority": "Medium",
+              "reporter": "Bekir ÖZTÜRK",
+              "assignee": "Bekir ÖZTÜRK",
+              "environment": {
+                "spec_limit": {
+                  "id": 1,
+                  "test_step_def_id": 101,
+                  "limit_name": "Frequency_Range_Check",
+                  "limit_type": "PassFail",
+                  "nominal_value": null,
+                  "min_value": 10000,
+                  "max_value": 80000,
+                  "tolerance_value": null,
+                  "tolerance_unit": null,
+                  "unit": "Hz"
+                }
+              },
+              "labels": [],
+              "components": [],
+              "fix_versions": [],
+              "custom_fields": {},
+              "steps": [
+                {
+                  "index": 1,
+                  "action": "Test Setup Kurulması",
+                  "data": "Diagram",
+                  "expected_result": "Test Setup Kurulumun Düzgün Sekilde Tamamlanmis Olmasi",
+                  "attachments": [
+                    {
+                      "filename": "testsetupdiagram.png",
+                      "local_path": "attachments\\KT-323\\step_1\\testsetupdiagram.png"
+                    }
+                  ]
+                },
+                {
+                  "index": 2,
+                  "action": "Default ATT tablosu DUT üzerine yüklenmiş olmalıdır",
+                  "data": "",
+                  "expected_result": "Güncel ATT Tablosunun oluştuğu ve yüklendiği görülür.\nKazanç seviyeleme mekanizması aktif olduğu görülür.",
+                  "attachments": [
+                    {
+                      "filename": "ATT_Tablosu.xlsx",
+                      "local_path": "attachments\\KT-323\\step_2\\ATT_Tablosu.xlsx"
+                    }
+                  ]
+                },
+                {
+                  "index": 3,
+                  "action": "Hedef çıkış gücü test öncesinde tanımlanır.\n\nÇıkış gücü sabit kalacak şekilde attler değiştirilerek yeni att tablosu oluşturulur.",
+                  "data": "",
+                  "expected_result": "Sistem, frekans değişimine karşı çıkış gücünü regüle edebilecek yapıda olduğu görülür\n\nGüncel att tablosu oluşturulur.",
+                  "attachments": []
+                },
+                {
+                  "index": 4,
+                  "action": "Güncel att tablosu cihaza embed işlemi yapılır",
+                  "data": "",
+                  "expected_result": "Cihazın güncel att tablosunu yüklendiği görülür",
+                  "attachments": []
+                },
+                {
+                  "index": 5,
+                  "action": "Güncel tablo ile kazanç testi tekrarlanır",
+                  "data": "",
+                  "expected_result": "Her adım da çıkış gücünün sabit olduğu gözlenir.",
+                  "attachments": []
+                }
+              ],
+              "attachments": [
+                {
+                  "filename": "TMK-RF KAZANÇ (GAIN) DOĞRULAMA v2.docx",
+                  "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                  "file_size": 88345,
+                  "url": "https://jira.bilgem.tubitak.gov.tr/secure/attachment/108312/TMK-RF+KAZAN%C3%87+%28GAIN%29+DO%C4%9ERULAMA+v2.docx",
+                  "local_path": "attachments\\tests\\KT-323\\issue\\TMK-RF KAZANÇ (GAIN) DOĞRULAMA v2.docx"
+                }
+              ],
+              "preconditions": [
+                {
+                  "issue_id": "606191",
+                  "issue_key": "KT-324",
+                  "condition": "Ölçüm cihazları açık ve stabil durumda mı?\nÖlçüm cihazlarının kalibrasyonu geçerli mi?\nRF kabloları ve attenuator’lar doğru bağlanmış mı?\nATT tablosu DUT üzerinde yüklü mü?\nHedef çıkış gücü doğru tanımlanmış mı?"
+                },
+                {
+                  "issue_id": "606194",
+                  "issue_key": "KT-325",
+                  "condition": [
+                    {
+                      "id": 101,
+                      "equipment_code": "EQ-SA-001",
+                      "equipment_name": "Spectrum Analyzer",
+                      "manufacturer": "Keysight",
+                      "model": "N9020B MXA",
+                      "serial_no": "MY57100456",
+                      "hw_version": "Rev 2.0",
+                      "sw_version": "A.24.55",
+                      "status": "Active",
+                      "station_id": 5,
+                      "last_calibration_date": "2023-11-15T00:00:00Z",
+                      "next_calibration_date": "2024-11-15T00:00:00Z",
+                      "calibration_interval_days": 365,
+                      "created_at": "2023-01-10T09:00:00Z",
+                      "metadata": {
+                        "max_freq": "26.5 GHz",
+                        "options": [
+                          "B25",
+                          "P03"
+                        ]
+                      }
+                    },
+                    {
+                      "id": 102,
+                      "equipment_code": "EQ-PM-045",
+                      "equipment_name": "Power Meter",
+                      "manufacturer": "Rohde & Schwarz",
+                      "model": "NRP50S",
+                      "serial_no": "1012.3456.02",
+                      "hw_version": "V1.0",
+                      "sw_version": "02.30",
+                      "status": "Active",
+                      "station_id": 2,
+                      "last_calibration_date": "2023-06-01T00:00:00Z",
+                      "next_calibration_date": "2024-06-01T00:00:00Z",
+                      "calibration_interval_days": 365,
+                      "created_at": "2023-02-15T14:30:00Z",
+                      "metadata": {
+                        "sensor_type": "Thermal",
+                        "connector": "USB"
+                      }
+                    },
+                    {
+                      "id": 103,
+                      "equipment_code": "EQ-NFA-009",
+                      "equipment_name": "Noise Figure Analyzer",
+                      "manufacturer": "Anritsu",
+                      "model": "MS2840A",
+                      "serial_no": "6201248899",
+                      "hw_version": "Rev 1.4",
+                      "sw_version": "5.11",
+                      "status": "Inactive",
+                      "station_id": 8,
+                      "last_calibration_date": "2022-05-20T00:00:00Z",
+                      "next_calibration_date": "2023-05-20T00:00:00Z",
+                      "calibration_interval_days": 365,
+                      "created_at": "2021-11-20T08:15:00Z",
+                      "metadata": {
+                        "noise_source_drive": "28V",
+                        "preamp": "Built-in"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "issue_id": "606205",
+                  "issue_key": "KT-328"
+                }
+              ]
+            }
+          ],
+          "runs": [
+            {
+              "run_id": "43941",
+              "test_key": "KT-323",
+              "status": "TODO",
+              "comment": null,
+              "assignee": "bekir.ozturk",
+              "executed_by": null,
+              "started_on": null,
+              "finished_on": null,
+              "defects": [],
+              "evidences": [],
+              "step_evidences": []
+            }
+          ],
+          "results_template": [
+            {
+              "run_id": "43941",
+              "test_key": "KT-323",
+              "status": "",
+              "comment": "",
+              "defects": [],
+              "evidences": [],
+              "step_results": [
+                {
+                  "step_index": 1,
+                  "status": "",
+                  "actual_result": "",
+                  "comment": "",
+                  "evidences": []
+                },
+                {
+                  "step_index": 2,
+                  "status": "",
+                  "actual_result": "",
+                  "comment": "",
+                  "evidences": []
+                },
+                {
+                  "step_index": 3,
+                  "status": "",
+                  "actual_result": "",
+                  "comment": "",
+                  "evidences": []
+                },
+                {
+                  "step_index": 4,
+                  "status": "",
+                  "actual_result": "",
+                  "comment": "",
+                  "evidences": []
+                },
+                {
+                  "step_index": 5,
+                  "status": "",
+                  "actual_result": "",
+                  "comment": "",
+                  "evidences": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "technical": {
+      "rapor_metadata": {
+        "rapor_id": "",
+        "rapor_turu": "",
+        "rapor_basligi": "",
+        "rapor_versiyonu": "",
+        "rapor_olusturma_tarihi_saat_utc": "",
+        "rapor_durumu": "",
+        "read_only": false,
+        "test_adi": "",
+        "test_kodu": "",
+        "ana_test_talimat_ref": "",
+        "alt_test_operasyon_talimat_ref": [],
+        "otomatik_talimat_id": ""
+      },
+      "proje_urun_metadata": {
+        "proje_adi_kodu": "",
+        "urun_sistem_adi": "Abuzer",
+        "alt_sistem_kart_modul_adi": "EFT123",
+        "urun_konfigurasyonu": "12.2.23.2",
+        "donanim_revizyonu": "1232.2.21",
+        "yazilim_firmware_versiyonu": {
+          "sw": "213.2.23",
+          "fw": "12.3.2.3.2"
+        },
+        "dut_seri_numarasi": "1231.321.31.12313",
+        "uretici": "",
+        "sku": "",
+        "uretim_parti": "",
+        "uretim_tarihi": ""
+      },
+      "test_ortami_metadata": {
+        "test_lokasyonu": "",
+        "ortam_sicakligi_c": null,
+        "ortam_nemi_percent": null,
+        "emi_rf_ortam_notu": "",
+        "test_tarihi": {
+          "baslangic_utc": "",
+          "bitis_utc": "",
+          "sure_dakika": null
+        },
+        "test_seviyesi": "",
+        "test_ortam_tipi": "",
+        "operator": ""
+      },
+      "dut_durumu_onkosul_metadata": {
+        "dut_calisma_modu": "",
+        "agc_kazanc_durumu": "",
+        "hedef_cikis_gucu_dbm": null,
+        "yuklenen_att_tablosu": "",
+        "dut_yazilim_versiyonu": "",
+        "dut_tarih": "",
+        "test_onkosul_durumu": "",
+        "precheck_list": [],
+        "ek_notlar": ""
+      },
+      "olcum_cihazlari_metadata": {
+        "cihaz_listesi": []
+      },
+      "test_parametre_metadata": {
+        "test_frekanslari_mhz": [],
+        "frekans_araligi_mhz": {
+          "baslangic": null,
+          "bitis": null,
+          "adim": null
+        },
+        "rbw_hz": null,
+        "vbw_hz": null,
+        "if_bw_hz": null,
+        "averaging": null,
+        "olcum_modu": "",
+        "sweep_ayarlari": {
+          "sweep_time_ms": null,
+          "points": null
+        },
+        "dwell_time_ms": null,
+        "limit_seti_versiyonu": ""
+      },
+      "test_sonuc_metadata_ozet": {
+        "olculen_parametreler": [],
+        "min_max_ortalama": {},
+        "limitler": {},
+        "sonuc": "",
+        "degerlendirme_notu": ""
+      },
+      "izlenebilirlik_rtm_metadata": {
+        "gereksinim_idleri": [],
+        "test_talimat_id": "",
+        "sapma_deviation_idleri": [],
+        "kapsam": ""
+      },
+      "onay_sorumluluk_metadata": {
+        "testi_yapan": {
+          "ad": "",
+          "rol": ""
+        },
+        "kontrol_eden": {
+          "ad": "",
+          "rol": ""
+        },
+        "onaylayan": {
+          "ad": "",
+          "rol": ""
+        },
+        "onay_tarihi": ""
+      },
+      "otomasyon_yazilim_metadata": {
+        "test_motoru_versiyonu": "",
+        "otomasyon_yazilimi_versiyonu": "",
+        "cli_ui_kullanim_bilgisi": "",
+        "parametre_dosyasi_versiyonu": "",
+        "script_test_case_id": "",
+        "script_adi": "",
+        "repo_commit": "",
+        "ci_build_id": ""
+      }
+    },
+    "required_fields": [
+      "technical.proje_urun_metadata.dut_seri_numarasi",
+      "technical.proje_urun_metadata.donanim_revizyonu",
+      "technical.proje_urun_metadata.yazilim_firmware_versiyonu",
+      "technical.proje_urun_metadata.uretim_parti",
+      "technical.test_ortami_metadata.test_lokasyonu",
+      "technical.test_ortami_metadata.ortam_sicakligi_c",
+      "technical.test_ortami_metadata.ortam_nemi_percent",
+      "technical.test_ortami_metadata.emi_rf_ortam_notu",
+      "technical.dut_durumu_onkosul_metadata.precheck_list",
+      "technical.dut_durumu_onkosul_metadata.dut_calisma_modu",
+      "technical.dut_durumu_onkosul_metadata.agc_kazanc_durumu",
+      "technical.dut_durumu_onkosul_metadata.yuklenen_att_tablosu",
+      "technical.olcum_cihazlari_metadata.cihaz_listesi",
+      "technical.test_parametre_metadata.frekans_araligi_mhz",
+      "technical.test_parametre_metadata.limit_seti_versiyonu",
+      "technical.izlenebilirlik_rtm_metadata.gereksinim_idleri",
+      "technical.izlenebilirlik_rtm_metadata.test_talimat_id"
+    ]
+  }
+}
