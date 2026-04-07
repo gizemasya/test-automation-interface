@@ -270,7 +270,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ATE POD Test Arayüzü")
-        self.resize(1400, 950) 
+        self.resize(1600, 950) 
         self.temp_filename = "temp_log_buffer.txt"
         self.temp_file_init() 
         
