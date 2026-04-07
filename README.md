@@ -21,7 +21,7 @@ Aşağıdaki dosyaların **aynı klasör içinde** bulunduğundan emin olun:
 - `rs_drivers.py` → Jeneratör ve analizör sürücüsü
 - `dut_driver.py` → DUT sürücüsü
 - `metadata.json` ve `rf_scenerio.json` → Test tanımlama dosyası
-
+- `attachments` klasörü → Test için ek dosyalar
 ---
 
 ### 2. Uygulamayı başlatın
