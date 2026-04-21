@@ -17,8 +17,8 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QTextEdit, QGroupBox, QFormLayout, QComboBox, 
                              QMessageBox, QCheckBox, QProgressDialog, QTabWidget,
                              QScrollArea, QFrame, QFileDialog)
-from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot, QLocale, Qt, QUrl, QTimer
-from PyQt6.QtGui import QDoubleValidator, QFont, QDesktopServices
+from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot, QLocale, Qt, QUrl, QTimer, QRegularExpression
+from PyQt6.QtGui import QDoubleValidator, QFont, QDesktopServices, QRegularExpressionValidator
 
 # --- SÜRÜCÜLER ---
 from rs_drivers import SignalGeneratorDriver, SpectrumAnalyzerDriver
@@ -109,7 +109,6 @@ class TestStepWidget(QFrame):
         param_btn_layout.addStretch() 
         self.details_layout.addLayout(param_btn_layout)
 
-        # JSON'da adımın verisi boşsa (parametre yoksa) butonu gizle
         if not str(step_data).strip():
             self.btn_set_params.setVisible(False)
 
@@ -158,41 +157,38 @@ class DutWorker(QThread):
 # ==========================================
 class GeneratorWorker(QThread):
     log_signal = pyqtSignal(dict); error_signal = pyqtSignal(dict)
-    def __init__(self, ip, mode, params):
+    def __init__(self, driver, mode, params):
         super().__init__()
-        self.ip = ip; self.mode = mode; self.params = params; self.running = True
+        self.driver = driver
+        self.mode = mode
+        self.params = params
+        self.running = True
+        
     def update_virtual_signal(self, active, freq, power):
         global CURRENT_SIGNAL
         CURRENT_SIGNAL["active"] = active; CURRENT_SIGNAL["freq"] = float(freq); CURRENT_SIGNAL["power"] = float(power)
+        
     def run(self):
-        driver = SignalGeneratorDriver(self.ip, simulate=True)
         try:
-            idn_info = "Bilinmiyor"
-            try: idn_info = driver.get_idn()
-            except: idn_info = "SIM_GEN_IDN"
-            self.log_signal.emit({"source": "GENERATOR", "event": "CONNECT", "ip_port": self.ip, "idn": idn_info, "msg": f"Cihaza Bağlandı. IDN: {idn_info}"})
-            base_data = self.params.copy(); base_data.update({"source": "GENERATOR", "ip_port": self.ip})
             if self.mode == 'SINGLE':
-                driver.connect_and_set(self.params['freq'], self.params['power'])
+                self.driver.apply_settings(self.params['freq'], self.params['power'])
                 self.update_virtual_signal(True, self.params['freq'], self.params['power'])
-                log_data = base_data.copy(); log_data.update({"event": "SINGLE_SET", "msg": f"Tek Sinyal: {self.params['freq']}MHz @ {self.params['power']}dBm"})
-                self.log_signal.emit(log_data)
+                self.log_signal.emit({"source": "GENERATOR", "event": "SINGLE_SET", "msg": f"Tek Sinyal: {self.params['freq']}MHz @ {self.params['power']}dBm"})
             elif self.mode == 'PRESET':
-                driver.preset(); self.update_virtual_signal(False, 0, -140)
-                self.log_signal.emit({"source": "GENERATOR", "event": "PRESET", "ip_port": self.ip, "msg": "Preset atıldı."})
+                self.driver.preset()
+                self.update_virtual_signal(False, 0, -140)
+                self.log_signal.emit({"source": "GENERATOR", "event": "PRESET", "msg": "Preset atıldı."})
             elif self.mode == 'SWEEP':
                 start, stop = float(self.params['start']), float(self.params['stop'])
                 step, dwell = float(self.params['step']), float(self.params['dwell'])
                 power = float(self.params['power'])
-                log_data = base_data.copy(); log_data.update({"event": "SWEEP_START", "msg": "Sweep Başladı"})
-                self.log_signal.emit(log_data)
+                self.log_signal.emit({"source": "GENERATOR", "event": "SWEEP_START", "msg": "Sweep Başladı"})
                 current_freq = start
                 while current_freq <= stop:
-                    if not self.running: self.log_signal.emit({"source": "GENERATOR", "event": "SWEEP_STOP", "ip_port": self.ip, "msg": "Sweep Durduruldu"}); break
-                    driver.connect_and_set(current_freq, power)
+                    if not self.running: self.log_signal.emit({"source": "GENERATOR", "event": "SWEEP_STOP", "msg": "Sweep Durduruldu"}); break
+                    self.driver.apply_settings(current_freq, power)
                     self.update_virtual_signal(True, current_freq, power)
-                    step_data = base_data.copy(); step_data.update({"event": "SWEEP_STEP", "freq": current_freq, "msg": f"Sweep: {current_freq} MHz"})
-                    self.log_signal.emit(step_data)
+                    self.log_signal.emit({"source": "GENERATOR", "event": "SWEEP_STEP", "freq": current_freq, "msg": f"Sweep: {current_freq} MHz"})
                     waited = 0
                     while waited < dwell:
                         if not self.running: break
@@ -202,17 +198,27 @@ class GeneratorWorker(QThread):
                 freq = float(self.params['freq'])
                 min_p, max_p = float(self.params['min_power']), float(self.params['max_power'])
                 speed = float(self.params['speed'])
-                log_data = base_data.copy(); log_data.update({"event": "AM_START", "msg": "AM Başladı"})
-                self.log_signal.emit(log_data)
-                mid_val = (max_p + min_p) / 2; amplitude = (max_p - min_p) / 2; t = 0.0
+                self.log_signal.emit({"source": "GENERATOR", "event": "AM_START", "msg": "AM Başladı"})
+                
+                mid_val = (max_p + min_p) / 2
+                amplitude = (max_p - min_p) / 2
+                
+                # --- ZAMANLAMA HATASI BURADA ÇÖZÜLDÜ ---
+                start_time = time.time()
+                
                 while self.running:
+                    # Gerçek geçen süreyi hesaplıyoruz
+                    t = time.time() - start_time
+                    
                     current_power = mid_val + amplitude * math.sin(speed * t)
-                    driver.connect_and_set(freq, f"{current_power:.2f}")
+                    self.driver.apply_settings(freq, f"{current_power:.2f}")
                     self.update_virtual_signal(True, freq, current_power)
-                    step_data = base_data.copy(); step_data.update({"event": "AM_STEP", "power": f"{current_power:.2f}", "msg": f"AM: {current_power:.2f} dBm"})
-                    self.log_signal.emit(step_data)
-                    time.sleep(REFRESH_RATE); t += REFRESH_RATE
-                self.log_signal.emit({"source": "GENERATOR", "event": "AM_STOP", "ip_port": self.ip, "msg": "AM Durduruldu"})
+                    self.log_signal.emit({"source": "GENERATOR", "event": "AM_STEP", "power": f"{current_power:.2f}", "msg": f"AM: {current_power:.2f} dBm"})
+                    
+                    # Sadece bekleme yapıyoruz, t'yi manuel artırmıyoruz
+                    time.sleep(REFRESH_RATE)
+                    
+                self.log_signal.emit({"source": "GENERATOR", "event": "AM_STOP", "msg": "AM Durduruldu"})
         except Exception as e: self.error_signal.emit({"source": "ERROR", "msg": f"Gen Hatası: {e}"})
     def stop(self): self.running = False
 
@@ -220,47 +226,88 @@ class GeneratorWorker(QThread):
 # WORKER 3: ANALİZÖR
 # ==========================================
 class AnalyzerWorker(QThread):
-    log_signal = pyqtSignal(dict); error_signal = pyqtSignal(dict)
-    def __init__(self, ip, mode, params=None):
+    log_signal = pyqtSignal(dict)
+    error_signal = pyqtSignal(dict)
+    trace_signal = pyqtSignal(dict) 
+    
+    def __init__(self, driver, mode, params=None):
         super().__init__()
-        self.ip = ip; self.mode = mode; self.params = params; self.running = True
-    def calculate_simulated_measurement(self):
+        self.driver = driver
+        self.mode = mode
+        self.params = params
+        self.running = True
+        self.needs_update = False 
+
+    # SİMÜLASYON DEĞERLERİNİ CANLI SİNYAL İLE EZEN FONKSİYON
+    def apply_simulation_effects(self, peak_x, peak_y, trace_y):
         global CURRENT_SIGNAL
-        center_freq = float(self.params['center']); span = float(self.params['span'])
-        start_view = center_freq - (span / 2); stop_view = center_freq + (span / 2)
-        measured_val = -140.0
+        c = self.params['center']
+        s = self.params['span']
+        if s <= 0: s = 10.0
+        
         if CURRENT_SIGNAL["active"]:
-            gen_freq = CURRENT_SIGNAL["freq"]; gen_power = CURRENT_SIGNAL["power"]
-            if start_view <= gen_freq <= stop_view: measured_val = gen_power - 2.0 + random.uniform(-0.5, 0.5)
-            else: measured_val = -110.0 + random.uniform(-2, 2)
-        else: measured_val = -120.0 + random.uniform(-1, 1)
-        return measured_val
+            gen_f = CURRENT_SIGNAL["freq"]
+            gen_p = CURRENT_SIGNAL["power"]
+            
+            # Jeneratörün frekansı analizörün ekranındaysa, tepe noktasını AM gücüne eşitle
+            if (c - s/2) <= gen_f <= (c + s/2):
+                peak_x = gen_f
+                peak_y = gen_p + random.uniform(-0.3, 0.3) # Ufak gürültü ekle
+            else:
+                peak_y = -110.0 + random.uniform(-2, 2)
+        else:
+            peak_y = -120.0 + random.uniform(-2, 2)
+            
+        return peak_x, peak_y, trace_y
+
     def run(self):
-        driver = SpectrumAnalyzerDriver(self.ip, simulate=True)
         try:
-            idn_info = "Bilinmiyor"
-            try: idn_info = driver.get_idn()
-            except: idn_info = "SIM_SA_IDN"
-            self.log_signal.emit({"source": "ANALYZER", "event": "CONNECT", "ip_port": self.ip, "idn": idn_info, "msg": f"Cihaza Bağlandı. IDN: {idn_info}"})
-            base_data = {}; 
-            if self.params: base_data = self.params.copy()
-            base_data.update({"source": "ANALYZER", "ip_port": self.ip})
             if self.mode == 'PRESET':
-                driver.preset(); self.log_signal.emit({"source": "ANALYZER", "event": "PRESET", "ip_port": self.ip, "msg": "Preset atıldı."}); return
+                self.driver.preset()
+                self.log_signal.emit({"source": "ANALYZER", "event": "PRESET", "msg": "Preset atıldı."})
+                return
+                
             if self.mode == 'SINGLE_SHOT':
-                if "Simulate=True" in driver.options: val = self.calculate_simulated_measurement(); time.sleep(0.1)
-                else: val = driver.configure_and_measure(self.params['center'], self.params['span'], self.params['ref'], self.params['rbw'])
-                log_data = base_data.copy(); log_data.update({"event": "MEASURE", "msg": f"Tek Ölçüm: {val:.2f} dBm", "data_content": f"{val:.2f}"})
-                self.log_signal.emit(log_data)
+                self.driver.apply_settings(self.params['center'], self.params['span'], self.params['ref'], self.params['rbw'])
+                peak_x, peak_y = self.driver.get_peak_marker()
+                trace_y = self.driver.get_trace_data()
+                
+                # Simülasyon modundaysa sahte veriyi Jeneratörün AM gücü ile değiştir
+                if self.driver.simulate:
+                    peak_x, peak_y, trace_y = self.apply_simulation_effects(peak_x, peak_y, trace_y)
+                
+                self.trace_signal.emit({
+                    "center": self.params['center'], "span": self.params['span'], 
+                    "peak_x": peak_x, "peak_y": peak_y, "trace_y": trace_y
+                })
+                self.log_signal.emit({"source": "ANALYZER", "event": "MEASURE", "msg": f"Tek Ölçüm: {peak_y:.2f} dBm @ {peak_x:.2f} MHz"})
+                return
+                
             elif self.mode == 'CONTINUOUS':
-                self.log_signal.emit({"source": "ANALYZER", "event": "LOOP_START", "ip_port": self.ip, "msg": "Sürekli Ölçüm Başladı..."})
+                self.log_signal.emit({"source": "ANALYZER", "event": "LOOP_START", "msg": "Sürekli Ölçüm Başladı..."})
+                self.driver.apply_settings(self.params['center'], self.params['span'], self.params['ref'], self.params['rbw'])
+                
                 while self.running:
-                    if "Simulate=True" in driver.options: val = self.calculate_simulated_measurement()
-                    else: val = driver.configure_and_measure(self.params['center'], self.params['span'], self.params['ref'], self.params['rbw'])
-                    log_data = base_data.copy(); log_data.update({"event": "MEASURE", "msg": f"Sürekli: {val:.2f} dBm", "data_content": f"{val:.2f}"})
-                    self.log_signal.emit(log_data)
+                    if self.needs_update:
+                        self.driver.apply_settings(self.params['center'], self.params['span'], self.params['ref'], self.params['rbw'])
+                        self.needs_update = False
+                        
+                    peak_x, peak_y = self.driver.get_peak_marker()
+                    trace_y = self.driver.get_trace_data()
+                    
+                    # Simülasyon modundaysa sahte veriyi Jeneratörün AM gücü ile değiştir
+                    if self.driver.simulate:
+                        peak_x, peak_y, trace_y = self.apply_simulation_effects(peak_x, peak_y, trace_y)
+                    
+                    self.trace_signal.emit({
+                        "center": self.params['center'], "span": self.params['span'], 
+                        "peak_x": peak_x, "peak_y": peak_y, "trace_y": trace_y
+                    })
+                    
+                    self.log_signal.emit({"source": "ANALYZER", "event": "MEASURE", "msg": f"Sürekli: {peak_y:.2f} dBm @ {peak_x:.2f} MHz"})
                     time.sleep(REFRESH_RATE)
         except Exception as e: self.error_signal.emit({"source": "ERROR", "msg": f"Spec Hatası: {e}"})
+        
     def stop(self): self.running = False
 
 # ==========================================
@@ -272,9 +319,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ATE POD Test Arayüzü")
         self.resize(1600, 950) 
         self.temp_filename = "temp_log_buffer.txt"
+        self.metadata_path = "metadata.json" 
         self.temp_file_init() 
         
-        # IDN Veri Hafızası
         self.sa_idn = "Bilinmiyor"
         self.gen_idn = "Bilinmiyor"
         self.current_json_data = None 
@@ -285,6 +332,10 @@ class MainWindow(QMainWindow):
         
         self.tabs = QTabWidget()
         main_wrapper.addWidget(self.tabs)
+
+        # IP VALIDATOR
+        ip_regex = QRegularExpression(r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$")
+        ip_validator = QRegularExpressionValidator(ip_regex)
 
         # SEKME 1: ÖN KOŞULLAR
         self.tab_preconditions = QWidget()
@@ -340,7 +391,7 @@ class MainWindow(QMainWindow):
         self.tabs.setTabEnabled(2, False)
 
         graph_top_layout = QHBoxLayout()
-        self.lbl_graph_info = QLabel("<b>Merkez Frekans:</b> -- MHz  |  <b>Span:</b> -- MHz  |  <b>Peak Güç:</b> -- dBm")
+        self.lbl_graph_info = QLabel("<b>Merkez Frekans:</b> -- MHz  |  <b>Span:</b> -- MHz  |  <b>Peak:</b> -- dBm @ -- MHz")
         self.lbl_graph_info.setStyleSheet("font-size: 14px; background: #e9ecef; padding: 8px; border-radius: 4px; color: #212529;")
         
         self.btn_export_png = QPushButton("PNG OLARAK KAYDET")
@@ -371,8 +422,8 @@ class MainWindow(QMainWindow):
 
         graph_main_layout.addWidget(self.plot_widget)
         
-        self.current_trace_x = []
-        self.current_trace_y = []
+        self.current_trace_x = []                       
+        self.current_trace_y = []                       
 
         self.only_double = QDoubleValidator()
         self.only_double.setLocale(QLocale.c()) 
@@ -398,65 +449,42 @@ class MainWindow(QMainWindow):
         # 2. GÜÇ KAYNAĞI
         ps_grp = QGroupBox("2. Güç Kaynağı")
         ps_form = QFormLayout()
-        
         self.combo_ports_ps = QComboBox() 
-        self.chk_sim_ps = QCheckBox("Simülasyon Modu")
-        self.chk_sim_ps.setChecked(True) 
-        
+        self.chk_sim_ps = QCheckBox("Simülasyon Modu"); self.chk_sim_ps.setChecked(True) 
         self.ps_volt = QLineEdit("12.0"); self.ps_volt.setValidator(self.only_double)
         self.ps_curr = QLineEdit("2.0"); self.ps_curr.setValidator(self.only_double)
         self.combo_ps_range = QComboBox(); self.combo_ps_range.addItems(["LOW (15V/7A)", "HIGH (30V/4A)"])
         
         ps_btn_layout1 = QHBoxLayout()
-        self.btn_ps_connect = QPushButton("BAĞLAN")
-        self.btn_ps_connect.setStyleSheet(STYLE_GREEN)
-        self.btn_ps_connect.clicked.connect(self.toggle_ps_connect)
+        self.btn_ps_connect = QPushButton("BAĞLAN"); self.btn_ps_connect.setStyleSheet(STYLE_GREEN); self.btn_ps_connect.clicked.connect(self.toggle_ps_connect)
         ps_btn_layout1.addWidget(self.btn_ps_connect)
 
         ps_btn_layout2 = QHBoxLayout()
-        self.btn_ps_apply = QPushButton("SET DEĞERLERİ GÖNDER")
-        self.btn_ps_apply.setStyleSheet(STYLE_BLUE)
-        self.btn_ps_apply.clicked.connect(self.ps_apply_values)
+        self.btn_ps_apply = QPushButton("SET DEĞERLERİ GÖNDER"); self.btn_ps_apply.setStyleSheet(STYLE_BLUE); self.btn_ps_apply.clicked.connect(self.ps_apply_values)
         ps_btn_layout2.addWidget(self.btn_ps_apply)
 
         ps_btn_layout3 = QHBoxLayout()
-        self.btn_ps_out_on = QPushButton("OUTPUT ON")
-        self.btn_ps_out_on.setStyleSheet(STYLE_YELLOW) 
-        self.btn_ps_out_on.clicked.connect(lambda: self.ps_set_output(True))
-        
-        self.btn_ps_out_off = QPushButton("OUTPUT OFF")
-        self.btn_ps_out_off.setStyleSheet(STYLE_RED)
-        self.btn_ps_out_off.clicked.connect(lambda: self.ps_set_output(False))
-        
-        ps_btn_layout3.addWidget(self.btn_ps_out_on)
-        ps_btn_layout3.addWidget(self.btn_ps_out_off)
+        self.btn_ps_out_on = QPushButton("OUTPUT ON"); self.btn_ps_out_on.setStyleSheet(STYLE_YELLOW); self.btn_ps_out_on.clicked.connect(lambda: self.ps_set_output(True))
+        self.btn_ps_out_off = QPushButton("OUTPUT OFF"); self.btn_ps_out_off.setStyleSheet(STYLE_RED); self.btn_ps_out_off.clicked.connect(lambda: self.ps_set_output(False))
+        ps_btn_layout3.addWidget(self.btn_ps_out_on); ps_btn_layout3.addWidget(self.btn_ps_out_off)
    
-        self.btn_ps_err = QPushButton("HATA SORGULA")
-        self.btn_ps_err.setStyleSheet(STYLE_GRAY)
-        self.btn_ps_err.clicked.connect(self.ps_get_error)
-
+        self.btn_ps_err = QPushButton("HATA SORGULA"); self.btn_ps_err.setStyleSheet(STYLE_GRAY); self.btn_ps_err.clicked.connect(self.ps_get_error)
         self.lbl_ps_live_info = QLabel("<b>Voltaj:</b> -- V &nbsp;|&nbsp; <b>Akım:</b> -- A")
         self.lbl_ps_live_info.setStyleSheet("font-size: 13px; background: #e9ecef; padding: 6px; border-radius: 4px; color: #212529; text-align: center;")
         self.lbl_ps_live_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        ps_form.addRow("Port:", self.combo_ports_ps)
-        ps_form.addRow(self.chk_sim_ps)
-        ps_form.addRow(ps_btn_layout1) 
-        ps_form.addRow("Voltaj (V):", self.ps_volt)
-        ps_form.addRow("Akım (A):", self.ps_curr)
-        ps_form.addRow("Aralık:", self.combo_ps_range)
-        ps_form.addRow(ps_btn_layout2) 
-        ps_form.addRow(ps_btn_layout3) 
-        ps_form.addRow(self.btn_ps_err) 
-        ps_form.addRow(self.lbl_ps_live_info) 
-        
-        ps_grp.setLayout(ps_form)
-        controls_vbox.addWidget(ps_grp)
+        ps_form.addRow("Port:", self.combo_ports_ps); ps_form.addRow(self.chk_sim_ps); ps_form.addRow(ps_btn_layout1) 
+        ps_form.addRow("Voltaj (V):", self.ps_volt); ps_form.addRow("Akım (A):", self.ps_curr); ps_form.addRow("Aralık:", self.combo_ps_range)
+        ps_form.addRow(ps_btn_layout2); ps_form.addRow(ps_btn_layout3); ps_form.addRow(self.btn_ps_err); ps_form.addRow(self.lbl_ps_live_info) 
+        ps_grp.setLayout(ps_form); controls_vbox.addWidget(ps_grp)
 
         # 3. JENERATÖR
-        gen_grp = QGroupBox("3. Sinyal Jeneratörü"); gen_vbox = QVBoxLayout()
-        self.gen_params_layout = QFormLayout() 
-        self.ip_gen = QLineEdit("192.168.1.50")
+        gen_grp = QGroupBox("3. Sinyal Jeneratörü"); gen_form = QFormLayout()
+        self.ip_gen = QLineEdit("192.168.1.50"); self.ip_gen.setValidator(ip_validator)
+        self.chk_sim_gen = QCheckBox("Simülasyon Modu"); self.chk_sim_gen.setChecked(False)
+        self.combo_gen_conn = QComboBox(); self.combo_gen_conn.addItems(["INSTR", "hislip0", "inst0", "socket"])
+        self.btn_gen_connect = QPushButton("BAĞLAN"); self.btn_gen_connect.setStyleSheet(STYLE_GREEN); self.btn_gen_connect.clicked.connect(self.toggle_gen_connect)
+
         self.combo_gen_mode = QComboBox(); self.combo_gen_mode.addItems(["Sabit Sinyal", "Sweep", "AM Modülasyon (Güç Değişimi)"])
         self.combo_gen_mode.currentIndexChanged.connect(self.update_gen_ui)
         self.freq_gen = QLineEdit("2400"); self.freq_gen.setValidator(self.only_double)
@@ -469,26 +497,49 @@ class MainWindow(QMainWindow):
         self.am_max_pow = QLineEdit("-10"); self.am_max_pow.setValidator(self.only_double)
         self.am_speed = QLineEdit("1.0"); self.am_speed.setValidator(self.only_double)
         self.btn_gen_start = QPushButton("BAŞLAT"); self.btn_gen_start.setStyleSheet(STYLE_GREEN); self.btn_gen_start.clicked.connect(self.toggle_generator)
-        self.gen_params_layout.addRow("Cihaz IP:", self.ip_gen); self.gen_params_layout.addRow("Mod Seçimi:", self.combo_gen_mode)
-        self.gen_params_layout.addRow("Frekans (MHz):", self.freq_gen); self.gen_params_layout.addRow("Sabit Güç (dBm):", self.pow_gen)
-        self.gen_params_layout.addRow("Sweep Başlangıç (MHz):", self.sweep_start); self.gen_params_layout.addRow("Sweep Bitiş (MHz):", self.sweep_stop)
-        self.gen_params_layout.addRow("Sweep Adım (MHz):", self.sweep_step); self.gen_params_layout.addRow("Bekleme Süresi (s):", self.sweep_dwell)
-        self.gen_params_layout.addRow("AM Min Güç (dBm):", self.am_min_pow); self.gen_params_layout.addRow("AM Max Güç (dBm):", self.am_max_pow)
-        self.gen_params_layout.addRow("AM Hızı (Rad/s):", self.am_speed); self.gen_params_layout.addRow(self.btn_gen_start)
-        gen_grp.setLayout(self.gen_params_layout); controls_vbox.addWidget(gen_grp)
+        
+        gen_form.addRow("Cihaz IP:", self.ip_gen)
+        gen_form.addRow("Bağlantı:", self.combo_gen_conn)
+        gen_form.addRow(self.chk_sim_gen)
+        gen_form.addRow(self.btn_gen_connect)
+        gen_form.addRow("Mod Seçimi:", self.combo_gen_mode)
+        gen_form.addRow("Frekans (MHz):", self.freq_gen); gen_form.addRow("Sabit Güç (dBm):", self.pow_gen)
+        gen_form.addRow("Sweep Başlangıç (MHz):", self.sweep_start); gen_form.addRow("Sweep Bitiş (MHz):", self.sweep_stop)
+        gen_form.addRow("Sweep Adım (MHz):", self.sweep_step); gen_form.addRow("Bekleme Süresi (s):", self.sweep_dwell)
+        gen_form.addRow("AM Min Güç (dBm):", self.am_min_pow); gen_form.addRow("AM Max Güç (dBm):", self.am_max_pow)
+        gen_form.addRow("AM Hızı (Rad/s):", self.am_speed); gen_form.addRow(self.btn_gen_start)
+        gen_grp.setLayout(gen_form); controls_vbox.addWidget(gen_grp)
 
         # 4. ANALİZÖR
-        sa_grp = QGroupBox("4. Spektrum Analizör"); sa_form = QFormLayout(); self.ip_sa = QLineEdit("192.168.1.51")
+        sa_grp = QGroupBox("4. Spektrum Analizör"); sa_form = QFormLayout()
+        self.ip_sa = QLineEdit("192.168.1.51"); self.ip_sa.setValidator(ip_validator)
+        self.chk_sim_sa = QCheckBox("Simülasyon Modu"); self.chk_sim_sa.setChecked(False)
+        self.combo_sa_conn = QComboBox(); self.combo_sa_conn.addItems(["INSTR", "hislip0", "inst0", "socket"])
+        
+        self.btn_sa_connect = QPushButton("BAĞLAN"); self.btn_sa_connect.setStyleSheet(STYLE_GREEN)
+        self.btn_sa_connect.clicked.connect(self.toggle_sa_connect)
+        
         self.sa_center = QLineEdit("2400"); self.sa_center.setValidator(self.only_double)
         self.sa_span = QLineEdit("10"); self.sa_span.setValidator(self.only_double)
         self.sa_ref = QLineEdit("0"); self.sa_ref.setValidator(self.only_double)
         self.sa_rbw = QLineEdit("100"); self.sa_rbw.setValidator(self.only_double)
+        
+        self.btn_sa_apply = QPushButton("AYARLARI UYGULA"); self.btn_sa_apply.setStyleSheet(STYLE_BLUE)
+        self.btn_sa_apply.clicked.connect(self.apply_sa_settings)
+
         btn_layout = QHBoxLayout()
         self.btn_sa_single = QPushButton("TEK ÖLÇÜM"); self.btn_sa_single.setStyleSheet(STYLE_YELLOW); self.btn_sa_single.clicked.connect(lambda: self.run_analyzer('SINGLE_SHOT'))
         self.btn_sa_cont = QPushButton("SÜREKLİ ÖLÇÜM"); self.btn_sa_cont.setStyleSheet(STYLE_GREEN); self.btn_sa_cont.clicked.connect(self.toggle_continuous_measure)
         btn_layout.addWidget(self.btn_sa_single); btn_layout.addWidget(self.btn_sa_cont)
-        sa_form.addRow("Cihaz IP:", self.ip_sa); sa_form.addRow("Center Freq (MHz):", self.sa_center); sa_form.addRow("Span (MHz):", self.sa_span)
-        sa_form.addRow("Ref Level (dBm):", self.sa_ref); sa_form.addRow("RBW (kHz):", self.sa_rbw); sa_form.addRow(btn_layout)
+        
+        sa_form.addRow("Cihaz IP:", self.ip_sa)
+        sa_form.addRow("Bağlantı:", self.combo_sa_conn)
+        sa_form.addRow(self.chk_sim_sa)
+        sa_form.addRow(self.btn_sa_connect)
+        sa_form.addRow("Center Freq (MHz):", self.sa_center); sa_form.addRow("Span (MHz):", self.sa_span)
+        sa_form.addRow("Ref Level (dBm):", self.sa_ref); sa_form.addRow("RBW (kHz):", self.sa_rbw)
+        sa_form.addRow(self.btn_sa_apply)
+        sa_form.addRow(btn_layout)
         sa_grp.setLayout(sa_form); controls_vbox.addWidget(sa_grp)
 
         # 5. GLOBAL KONTROLLER
@@ -506,7 +557,13 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(controls_scroll)
 
         # --- SÜTUN 2: LOG EKRANI ---
+        self.center_tabs = QTabWidget()
+        self.tab_log = QWidget()
+        log_lay = QVBoxLayout(self.tab_log)
+        log_lay.setContentsMargins(0,0,0,0)
         self.log_area = QTextEdit(); self.log_area.setReadOnly(True)
+        log_lay.addWidget(self.log_area)
+        self.center_tabs.addTab(self.tab_log, "Log Ekranı")
 
         # --- SÜTUN 3: TEST ADIMLARI ---
         steps_grp = QGroupBox("Test Senaryosu (Adımlar)"); steps_layout = QVBoxLayout()
@@ -522,12 +579,18 @@ class MainWindow(QMainWindow):
 
         # 4 : 5 : 5
         test_main_layout.addLayout(left_layout, 4)
-        test_main_layout.addWidget(self.log_area, 5)
+        test_main_layout.addWidget(self.center_tabs, 5)
         test_main_layout.addWidget(steps_grp, 5)
 
+        # DRIVER MEMORY
         self.dut_thread = None; self.gen_worker = None; self.sa_worker = None
         self.preset_gen_worker = None; self.preset_sa_worker = None
+        
         self.ps_driver = None; self.ps_is_connected = False 
+        self.sa_driver = None; self.sa_is_connected = False
+        self.gen_driver = None; self.gen_is_connected = False
+        
+        self.sa_current_params = {}
         self.step_widgets = [] 
 
         self.ps_monitor_timer = QTimer()
@@ -539,7 +602,6 @@ class MainWindow(QMainWindow):
         
         self.refresh_ports()
         self.update_gen_ui()
-        
         self.load_metadata(None)
 
     def clear_layout(self, layout):
@@ -602,7 +664,6 @@ class MainWindow(QMainWindow):
             
             self.debug_log({"source": "SYSTEM", "event": "INFO", "msg": "Parametreler otomatik dolduruldu."})
             QMessageBox.information(self, "Başarılı", "Parametreler arayüze başarıyla yüklendi.\nKomutları manuel olarak başlatabilirsiniz.")
-            
         except Exception as e:
             QMessageBox.warning(self, "Hata", f"Parametreler ayrıştırılamadı:\n{str(e)}")
 
@@ -613,41 +674,118 @@ class MainWindow(QMainWindow):
         if current_ports != existing_ports:
             selected_dut = self.combo_ports.currentText()
             selected_ps = self.combo_ports_ps.currentText()
-            
             self.combo_ports.clear()
             self.combo_ports_ps.clear()
-            
             for p in current_ports:
                 self.combo_ports.addItem(p)
                 self.combo_ports_ps.addItem(p)
-                
-            if selected_dut in current_ports:
-                self.combo_ports.setCurrentText(selected_dut)
-            if selected_ps in current_ports:
-                self.combo_ports_ps.setCurrentText(selected_ps)
+            if selected_dut in current_ports: self.combo_ports.setCurrentText(selected_dut)
+            if selected_ps in current_ports: self.combo_ports_ps.setCurrentText(selected_ps)
 
+    # --- JENERATÖR BAĞLANTI FONKSİYONLARI ---
+    def toggle_gen_connect(self):
+        if not self.gen_is_connected:
+            if not self.ip_gen.hasAcceptableInput() and not self.chk_sim_gen.isChecked():
+                QMessageBox.warning(self, "Hata", "Geçersiz IP Formatı!"); return
+                
+            ip = self.ip_gen.text(); is_sim = self.chk_sim_gen.isChecked()
+            conn_type = self.combo_gen_conn.currentText()
+            
+            self.gen_driver = SignalGeneratorDriver(ip, simulate=is_sim, conn_type=conn_type)
+            try:
+                self.gen_driver.connect()
+                self.gen_idn = self.gen_driver.get_idn()
+                self.debug_log({"source": "GENERATOR", "event": "CONNECT", "ip_port": ip, "idn": self.gen_idn, "msg": f"GEN Bağlandı. IDN: {self.gen_idn}"})
+                
+                self.btn_gen_connect.setText("BAĞLANTIYI KES"); self.btn_gen_connect.setStyleSheet(STYLE_RED)
+                self.ip_gen.setEnabled(False); self.chk_sim_gen.setEnabled(False); self.combo_gen_conn.setEnabled(False)
+                self.gen_is_connected = True
+            except Exception as e:
+                self.debug_log({"source": "ERROR", "msg": f"GEN Bağlantı Hatası: {e}"})
+        else:
+            if self.gen_worker and self.gen_worker.isRunning():
+                self.toggle_generator() 
+            if self.gen_driver:
+                try: self.gen_driver.disconnect()
+                except: pass
+            
+            self.debug_log({"source": "GENERATOR", "event": "DISCONNECT", "ip_port": self.ip_gen.text(), "msg": "GEN Bağlantısı Kesildi"})
+            self.btn_gen_connect.setText("BAĞLAN"); self.btn_gen_connect.setStyleSheet(STYLE_GREEN)
+            self.ip_gen.setEnabled(True); self.chk_sim_gen.setEnabled(True); self.combo_gen_conn.setEnabled(True)
+            self.gen_is_connected = False; self.gen_driver = None
+
+    # --- SA BAĞLANTI & CANLI AYAR FONKSİYONLARI ---
+    def toggle_sa_connect(self):
+        if not self.sa_is_connected:
+            if not self.ip_sa.hasAcceptableInput() and not self.chk_sim_sa.isChecked():
+                QMessageBox.warning(self, "Hata", "Geçersiz IP Formatı!"); return
+                
+            ip = self.ip_sa.text(); is_sim = self.chk_sim_sa.isChecked()
+            conn_type = self.combo_sa_conn.currentText()
+            
+            self.sa_driver = SpectrumAnalyzerDriver(ip, simulate=is_sim, conn_type=conn_type)
+            try:
+                self.sa_driver.connect()
+                self.sa_idn = self.sa_driver.get_idn()
+                self.debug_log({"source": "ANALYZER", "event": "CONNECT", "ip_port": ip, "idn": self.sa_idn, "msg": f"SA Bağlandı. IDN: {self.sa_idn}"})
+                
+                self.btn_sa_connect.setText("BAĞLANTIYI KES"); self.btn_sa_connect.setStyleSheet(STYLE_RED)
+                self.ip_sa.setEnabled(False); self.chk_sim_sa.setEnabled(False); self.combo_sa_conn.setEnabled(False)
+                self.sa_is_connected = True
+            except Exception as e:
+                self.debug_log({"source": "ERROR", "msg": f"SA Bağlantı Hatası: {e}"})
+        else:
+            if self.sa_worker and self.sa_worker.isRunning():
+                self.toggle_continuous_measure() 
+            if self.sa_driver:
+                try: self.sa_driver.disconnect()
+                except: pass
+            
+            self.debug_log({"source": "ANALYZER", "event": "DISCONNECT", "ip_port": self.ip_sa.text(), "msg": "SA Bağlantısı Kesildi"})
+            self.btn_sa_connect.setText("BAĞLAN"); self.btn_sa_connect.setStyleSheet(STYLE_GREEN)
+            self.ip_sa.setEnabled(True); self.chk_sim_sa.setEnabled(True); self.combo_sa_conn.setEnabled(True)
+            self.sa_is_connected = False; self.sa_driver = None
+
+    def apply_sa_settings(self):
+        if not self.sa_is_connected or not self.sa_driver:
+            QMessageBox.warning(self, "Hata", "Önce Spektrum Analizöre Bağlanın!"); return
+            
+        c = self._to_double(self.sa_center.text())
+        s = self._to_double(self.sa_span.text())
+        r = self._to_double(self.sa_ref.text())
+        rbw = self._to_double(self.sa_rbw.text())
+        
+        self.sa_current_params = {'center': c, 'span': s, 'ref': r, 'rbw': rbw}
+        
+        # Eğer okuma döngüsü açıksa, yeni parametreleri bayrakla thread'e gönder
+        if self.sa_worker and self.sa_worker.isRunning():
+            self.sa_worker.params = self.sa_current_params
+            self.sa_worker.needs_update = True
+        else:
+            try:
+                self.sa_driver.apply_settings(c, s, r, rbw)
+                self.debug_log({"source": "ANALYZER", "event": "SETTINGS", "ip_port": self.ip_sa.text(), "msg": f"Ayarlar uygulandı: {c}MHz, {s}MHz span"})
+            except Exception as e:
+                self.debug_log({"source": "ERROR", "msg": f"SA Ayar Hatası: {e}"})
+
+    # --- POWER SUPPLY FONKSİYONLARI ---
     def toggle_ps_connect(self):
-        port = self.combo_ports_ps.currentText()
-        is_sim = self.chk_sim_ps.isChecked()
+        port = self.combo_ports_ps.currentText(); is_sim = self.chk_sim_ps.isChecked()
         if not self.ps_is_connected:
             self.ps_driver = PowerSupplyDriver(port, simulate=is_sim)
             try:
                 self.ps_driver.connect()
                 port_name = "SIM" if is_sim else port
-                
                 idn_info = "Bilinmiyor"
                 try: idn_info = self.ps_driver.get_idn()
                 except: idn_info = "SIM_PS_IDN" if is_sim else "IDN_ALINAMADI"
                 
                 self.debug_log({"source": "POWER_SUPPLY", "event": "CONNECT", "ip_port": port_name, "idn": idn_info, "msg": f"Güç Kaynağına Bağlandı. IDN: {idn_info}"})
-                
                 self.btn_ps_connect.setText("BAĞLANTIYI KES"); self.btn_ps_connect.setStyleSheet(STYLE_RED)
                 self.combo_ports_ps.setEnabled(False); self.chk_sim_ps.setEnabled(False)
                 self.ps_is_connected = True
-                
                 self.ps_monitor_timer.start(1000) 
-            except Exception as e:
-                self.debug_log({"source": "ERROR", "msg": f"PS Bağlantı Hatası: {e}"})
+            except Exception as e: self.debug_log({"source": "ERROR", "msg": f"PS Bağlantı Hatası: {e}"})
         else:
             if self.ps_driver:
                 try: self.ps_driver.disconnect()
@@ -657,7 +795,6 @@ class MainWindow(QMainWindow):
             self.btn_ps_connect.setText("BAĞLAN"); self.btn_ps_connect.setStyleSheet(STYLE_GREEN)
             self.combo_ports_ps.setEnabled(True); self.chk_sim_ps.setEnabled(True)
             self.ps_is_connected = False; self.ps_driver = None
-            
             self.ps_monitor_timer.stop()
             self.lbl_ps_live_info.setText("<b>Voltaj:</b> -- V &nbsp;|&nbsp; <b>Akım:</b> -- A")
 
@@ -699,11 +836,8 @@ class MainWindow(QMainWindow):
             try:
                 v = self.ps_driver.measure_voltage()
                 i = self.ps_driver.measure_current()
-                try:
-                    v_str = f"{float(v):.2f}"
-                    i_str = f"{float(i):.2f}"
-                except:
-                    v_str = str(v); i_str = str(i)
+                try: v_str = f"{float(v):.2f}"; i_str = f"{float(i):.2f}"
+                except: v_str = str(v); i_str = str(i)
                 self.lbl_ps_live_info.setText(f"<b>Voltaj:</b> {v_str} V &nbsp;|&nbsp; <b>Akım:</b> {i_str} A")
             except Exception:
                 self.lbl_ps_live_info.setText("<b>Voltaj:</b> HATA &nbsp;|&nbsp; <b>Akım:</b> HATA")
@@ -716,12 +850,22 @@ class MainWindow(QMainWindow):
                 self.debug_log({"source": "POWER_SUPPLY", "event": "PRESET", "ip_port": port_name, "msg": "Cihaz Sıfırlandı (*RST)"})
             except Exception as e:
                 self.debug_log({"source": "ERROR", "msg": f"PS Reset Hatası: {e}"})
+                
+        if self.gen_is_connected and self.gen_driver:
+            try: 
+                self.gen_driver.preset()
+                self.debug_log({"source": "GENERATOR", "event": "PRESET", "ip_port": self.ip_gen.text(), "msg": "Preset atıldı."})
+            except: pass
             
-        self.preset_gen_worker = GeneratorWorker(self.ip_gen.text(), 'PRESET', {})
-        self.preset_gen_worker.log_signal.connect(self.debug_log); self.preset_gen_worker.start()
-        self.preset_sa_worker = AnalyzerWorker(self.ip_sa.text(), 'PRESET', {})
-        self.preset_sa_worker.log_signal.connect(self.debug_log); self.preset_sa_worker.start()
+        if self.sa_is_connected and self.sa_driver:
+            try:
+                self.sa_driver.preset()
+                self.debug_log({"source": "ANALYZER", "event": "PRESET", "ip_port": self.ip_sa.text(), "msg": "Preset atıldı."})
+            except: pass
 
+    # ==========================================
+    # JSON YÜKLEME 
+    # ==========================================
     def select_metadata_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Test Senaryosu (JSON) Seç", "", "JSON Dosyaları (*.json)")
         if file_path:
@@ -734,11 +878,8 @@ class MainWindow(QMainWindow):
         self.precondition_checkboxes.clear()
         self.step_widgets.clear()
         self.current_json_data = None
-        
         self.btn_proceed.setEnabled(False)
         self.btn_proceed.setStyleSheet(STYLE_GRAY)
-        
-        # JSON yüklenmeden sekmeleri kitle
         self.tabs.setTabEnabled(1, False)
         self.tabs.setTabEnabled(2, False)
 
@@ -747,14 +888,10 @@ class MainWindow(QMainWindow):
                 lbl = QLabel("<b>Lütfen yukarıdan bir Test Senaryosu (JSON) dosyası seçin.</b><br>Dosya seçilmeden test adımları yüklenmez.")
                 lbl.setStyleSheet("color: #41464b; font-size: 14px;")
                 self.precond_dynamic_layout.addWidget(lbl)
-                # Geliştirme modu kapatıldı. Sekmeler her koşulda kilitli kalacak.
-                self.tabs.setTabEnabled(1, False) 
-                self.tabs.setTabEnabled(2, False)
                 return
 
             with open(filepath, "r", encoding="utf-8") as f: data = json.load(f)
             self.current_json_data = data 
-
             executions = data.get("metadata", {}).get("execution", {}).get("executions", [])
             if not executions: raise ValueError("Executions listesi boş.")
             tests = executions[0].get("tests", [])
@@ -764,6 +901,14 @@ class MainWindow(QMainWindow):
             baslik = QLabel("<h2>Jira Test Ön Koşulları Doğrulaması</h2><p>Teste başlamadan önce onaylayın:</p>")
             self.precond_dynamic_layout.addWidget(baslik)
 
+            if preconditions_list:
+                self.chk_select_all = QCheckBox("Tümünü Seç / Kaldır")
+                self.chk_select_all.setStyleSheet("font-size: 14px; font-weight: bold; padding: 5px; color: #084298;")
+                self.chk_select_all.toggled.connect(self.toggle_all_preconditions)
+                self.precond_dynamic_layout.addWidget(self.chk_select_all)
+                line = QFrame(); line.setFrameShape(QFrame.Shape.HLine); line.setFrameShadow(QFrame.Shadow.Sunken); line.setStyleSheet("background-color: #084298;")
+                self.precond_dynamic_layout.addWidget(line)
+
             for p in preconditions_list:
                 cond = p.get("condition")
                 if isinstance(cond, str):
@@ -771,36 +916,26 @@ class MainWindow(QMainWindow):
                         if line.strip():
                             cb = QCheckBox(line.strip()); cb.setStyleSheet("font-size: 14px; padding: 5px;")
                             cb.toggled.connect(self.check_preconditions_state)
-                            self.precond_dynamic_layout.addWidget(cb)
-                            self.precondition_checkboxes.append(cb)
+                            self.precond_dynamic_layout.addWidget(cb); self.precondition_checkboxes.append(cb)
                 elif isinstance(cond, list):
                     for item in cond:
                         if isinstance(item, dict) and "equipment_name" in item:
                             cb = QCheckBox(f"Cihaz: {item.get('equipment_name')} - {item.get('model')}")
                             cb.setStyleSheet("font-size: 14px; padding: 5px;")
                             cb.toggled.connect(self.check_preconditions_state)
-                            self.precond_dynamic_layout.addWidget(cb)
-                            self.precondition_checkboxes.append(cb)
+                            self.precond_dynamic_layout.addWidget(cb); self.precondition_checkboxes.append(cb)
 
             if not self.precondition_checkboxes:
-                self.tabs.setTabEnabled(1, True)
-                self.tabs.setTabEnabled(2, True)
-                self.btn_proceed.setEnabled(True)
-                self.btn_proceed.setStyleSheet(STYLE_GREEN)
+                self.tabs.setTabEnabled(1, True); self.tabs.setTabEnabled(2, True)
+                self.btn_proceed.setEnabled(True); self.btn_proceed.setStyleSheet(STYLE_GREEN)
 
             steps_list = tests[0].get("steps", [])
             for s in steps_list:
                 idx = s.get("index"); action = s.get("action", "Adım"); expected = s.get("expected_result", ""); attachments = s.get("attachments", [])
-                
-                # ADIMA AİT VERİYİ AL (Boşsa buton gizlenecek)
                 step_data = s.get("data", "")
-                
                 step_widget = TestStepWidget(idx, action, expected, attachments, step_data)
                 step_widget.toggled_signal.connect(self.on_step_toggled)
-                
-                # PARAMETRE SİNYALİNİ BAĞLA
                 step_widget.set_params_signal.connect(self.apply_test_parameters)
-                
                 self.steps_inner_layout.addWidget(step_widget)
                 self.step_widgets.append(step_widget)
 
@@ -810,13 +945,17 @@ class MainWindow(QMainWindow):
             lbl = QLabel(f"<b>Metadata okunurken hata oluştu:</b><br>{str(e)}")
             lbl.setStyleSheet("color: red; font-size: 14px;")
             self.precond_dynamic_layout.addWidget(lbl)
-            self.tabs.setTabEnabled(1, False)
-            self.tabs.setTabEnabled(2, False)
+
+    def toggle_all_preconditions(self, checked):
+        for cb in self.precondition_checkboxes: cb.setChecked(checked)
 
     def check_preconditions_state(self):
         all_checked = all(cb.isChecked() for cb in self.precondition_checkboxes)
-        self.tabs.setTabEnabled(1, all_checked)
-        self.tabs.setTabEnabled(2, all_checked)
+        if hasattr(self, 'chk_select_all'):
+            self.chk_select_all.blockSignals(True) 
+            self.chk_select_all.setChecked(all_checked)
+            self.chk_select_all.blockSignals(False)
+        self.tabs.setTabEnabled(1, all_checked); self.tabs.setTabEnabled(2, all_checked)
         if hasattr(self, 'btn_proceed'):
             self.btn_proceed.setEnabled(all_checked)
             self.btn_proceed.setStyleSheet(STYLE_GREEN if all_checked else STYLE_GRAY)
@@ -851,15 +990,13 @@ class MainWindow(QMainWindow):
         self.am_min_pow.setEnabled(False); self.am_max_pow.setEnabled(False); self.am_speed.setEnabled(False)
         self.btn_gen_start.setText("BAŞLAT") 
         if mode == "Sweep":
-            self.freq_gen.setEnabled(False) 
-            self.sweep_start.setEnabled(True); self.sweep_stop.setEnabled(True)
+            self.freq_gen.setEnabled(False); self.sweep_start.setEnabled(True); self.sweep_stop.setEnabled(True)
             self.sweep_step.setEnabled(True); self.sweep_dwell.setEnabled(True)
         elif mode == "AM Modülasyon (Güç Değişimi)":
-            self.pow_gen.setEnabled(False)
-            self.am_min_pow.setEnabled(True); self.am_max_pow.setEnabled(True); self.am_speed.setEnabled(True)
+            self.pow_gen.setEnabled(False); self.am_min_pow.setEnabled(True); self.am_max_pow.setEnabled(True); self.am_speed.setEnabled(True)
 
     def set_gen_inputs_enabled(self, enabled):
-        self.ip_gen.setEnabled(enabled); self.combo_gen_mode.setEnabled(enabled)
+        self.combo_gen_mode.setEnabled(enabled)
         self.freq_gen.setEnabled(enabled); self.pow_gen.setEnabled(enabled)
         self.sweep_start.setEnabled(enabled); self.sweep_stop.setEnabled(enabled)
         self.sweep_step.setEnabled(enabled); self.sweep_dwell.setEnabled(enabled)
@@ -867,32 +1004,28 @@ class MainWindow(QMainWindow):
         if enabled: self.update_gen_ui() 
 
     def toggle_generator(self):
+        if not self.gen_is_connected or not self.gen_driver:
+            QMessageBox.warning(self, "Hata", "Önce Jeneratöre Bağlanın!"); return
+            
         if self.gen_worker and self.gen_worker.isRunning():
             self.gen_worker.stop(); self.gen_worker.wait()
             self.btn_gen_start.setText("BAŞLAT"); self.btn_gen_start.setStyleSheet(STYLE_GREEN)
             self.set_gen_inputs_enabled(True); return 
             
-        mode_text = self.combo_gen_mode.currentText()
-        params = {}
-        mode_code = ""
+        mode_text = self.combo_gen_mode.currentText(); params = {}; mode_code = ""
         
         if mode_text == "Sabit Sinyal":
-            mode_code = 'SINGLE'
-            params = {'freq': self._to_double(self.freq_gen.text()), 'power': self._to_double(self.pow_gen.text())}
+            mode_code = 'SINGLE'; params = {'freq': self._to_double(self.freq_gen.text()), 'power': self._to_double(self.pow_gen.text())}
         elif mode_text == "Sweep":
             step_val = self._to_double(self.sweep_step.text())
-            if step_val == 0.0:
-                QMessageBox.warning(self, "Hata", "Sweep Adım değeri 0 olamaz!")
-                return
+            if step_val == 0.0: QMessageBox.warning(self, "Hata", "Sweep Adım değeri 0 olamaz!"); return
             mode_code = 'SWEEP'
-            params = {'start': self._to_double(self.sweep_start.text()), 'stop': self._to_double(self.sweep_stop.text()), 
-                      'step': step_val, 'dwell': self._to_double(self.sweep_dwell.text()), 'power': self._to_double(self.pow_gen.text())}
+            params = {'start': self._to_double(self.sweep_start.text()), 'stop': self._to_double(self.sweep_stop.text()), 'step': step_val, 'dwell': self._to_double(self.sweep_dwell.text()), 'power': self._to_double(self.pow_gen.text())}
         elif mode_text == "AM Modülasyon (Güç Değişimi)":
             mode_code = 'AM_SINE'
-            params = {'freq': self._to_double(self.freq_gen.text()), 'min_power': self._to_double(self.am_min_pow.text()),
-                      'max_power': self._to_double(self.am_max_pow.text()), 'speed': self._to_double(self.am_speed.text())}
+            params = {'freq': self._to_double(self.freq_gen.text()), 'min_power': self._to_double(self.am_min_pow.text()), 'max_power': self._to_double(self.am_max_pow.text()), 'speed': self._to_double(self.am_speed.text())}
                       
-        self.gen_worker = GeneratorWorker(self.ip_gen.text(), mode_code, params)
+        self.gen_worker = GeneratorWorker(self.gen_driver, mode_code, params)
         self.gen_worker.log_signal.connect(self.debug_log); self.gen_worker.error_signal.connect(self.debug_log)
         
         if mode_code != 'SINGLE': 
@@ -908,7 +1041,7 @@ class MainWindow(QMainWindow):
         except: pass
 
     # ==========================================
-    # LOG VE GRAFİK GÜNCELLEME SİNYALİ YAKALAYICI
+    # LOG VE GRAFİK GÜNCELLEME 
     # ==========================================
     @pyqtSlot(dict)
     def debug_log(self, data):
@@ -917,12 +1050,6 @@ class MainWindow(QMainWindow):
         event = data.get("event", "")
         color = "black"
         
-        if event == "CONNECT":
-            if source == "ANALYZER":
-                self.sa_idn = data.get("idn", "Bilinmiyor")
-            elif source == "GENERATOR":
-                self.gen_idn = data.get("idn", "Bilinmiyor")
-                
         if source == "DUT": color = "green"
         elif source == "GENERATOR": color = "blue"
         elif source == "ANALYZER": color = "#d63384"
@@ -931,7 +1058,6 @@ class MainWindow(QMainWindow):
         
         self.log_area.append(f'<span style="color:{color};">[{timestamp_str}] {msg}</span>')
         
-        # LOG KAYIT İŞLEMİ
         def g(key): return str(data.get(key, "0"))
         row = [
             timestamp_str, source, data.get('event', '0'), data.get('ip_port', '0'),
@@ -943,97 +1069,58 @@ class MainWindow(QMainWindow):
             with open(self.temp_filename, 'a', encoding='utf-8') as f: f.write("|".join(row) + "\n")
         except: pass
 
-        # --- GRAFİK EKRANI GÜNCELLEME ---
-        if event == "MEASURE" and source == "ANALYZER":
-            try:
-                meas_val = self._to_double(str(data.get('data_content', -140.0)))
-                center = self._to_double(self.sa_center.text())
-                span = self._to_double(self.sa_span.text())
-                
-                if span <= 0: span = 10.0 
-                
-                self.lbl_graph_info.setText(f"<b>Merkez Frekans:</b> {center} MHz  |  <b>Span:</b> {span} MHz  |  <b>Peak Güç:</b> {meas_val:.2f} dBm")
-                
-                x = np.linspace(center - span/2, center + span/2, 501)
-                
-                noise_floor = -115.0 
-                y = np.random.normal(noise_floor, 1.5, 501) 
-                
-                peak_freq = center
-                if CURRENT_SIGNAL["active"] and (center - span/2 <= CURRENT_SIGNAL["freq"] <= center + span/2):
-                    peak_freq = CURRENT_SIGNAL["freq"]
-                
-                if meas_val > noise_floor + 5:
-                    sigma = span / 250.0  
-                    gauss = (meas_val - noise_floor) * np.exp(-0.5 * ((x - peak_freq) / sigma)**2)
-                    y = np.maximum(y, noise_floor + gauss) 
-                
-                self.current_trace_x = x
-                self.current_trace_y = y
-                self.sa_curve.setData(x, y)
-                
-            except Exception as e:
-                print(f"Grafik çizim hatası: {e}")
+    @pyqtSlot(dict)
+    def update_graph(self, data):
+        try:
+            center = data['center']; span = data['span']; peak_x = data['peak_x']; peak_y = data['peak_y']; trace_y = data['trace_y']
+            if span <= 0: span = 10.0 
+            
+            self.lbl_graph_info.setText(f"<b>Merkez Frekans:</b> {center} MHz  |  <b>Span:</b> {span} MHz  |  <b>Peak:</b> {peak_y:.2f} dBm @ {peak_x:.2f} MHz")
+            
+            x = np.linspace(center - span/2, center + span/2, len(trace_y))
+            self.current_trace_x = x
+            self.current_trace_y = trace_y
+            self.sa_curve.setData(x, trace_y)
+            
+        except Exception as e: print(f"Grafik çizim hatası: {e}")
                 
         if CURRENT_SIGNAL["active"]:
             self.gen_marker.setValue(CURRENT_SIGNAL["freq"])
             self.gen_marker.label.setFormat(f"GEN: {CURRENT_SIGNAL['freq']:.2f} MHz")
             self.gen_marker.show()
-        else:
-            self.gen_marker.hide()
+        else: self.gen_marker.hide()
 
     # ==========================================
     # GRAFİK DIŞA AKTARIM FONKSİYONLARI
     # ==========================================
     def export_graph_png(self):
-        now = datetime.datetime.now()
-        ms = now.strftime("%f")[:3]
-        time_str_file = now.strftime("%Y%m%d_%H%M%S")
+        now = datetime.datetime.now(); ms = now.strftime("%f")[:3]; time_str_file = now.strftime("%Y%m%d_%H%M%S")
         file_path = f"Spektrum_Grafik_{time_str_file}_{ms}.png"
-
         try:
             exporter = pg.exporters.ImageExporter(self.plot_widget.scene())
             exporter.export(file_path)
-            QMessageBox.information(self, "Başarılı", f"Grafik PNG olarak otomatik kaydedildi:\n{file_path}")
-        except Exception as e:
-            QMessageBox.critical(self, "Hata", f"PNG kaydedilemedi: {e}")
+            QMessageBox.information(self, "Başarılı", f"Grafik PNG olarak kaydedildi:\n{file_path}")
+        except Exception as e: QMessageBox.critical(self, "Hata", f"PNG kaydedilemedi: {e}")
 
     def export_graph_csv(self):
         if not len(self.current_trace_x):
-            QMessageBox.warning(self, "Hata", "Kaydedilecek grafik verisi yok! Lütfen önce ölçüm alın.")
-            return
+            QMessageBox.warning(self, "Hata", "Kaydedilecek grafik verisi yok! Lütfen önce ölçüm alın."); return
             
-        now = datetime.datetime.now()
-        ms = now.strftime("%f")[:3]
-        time_str_file = now.strftime("%Y%m%d_%H%M%S")
-        time_str_log = now.strftime("%Y-%m-%d %H:%M:%S")
-        file_path = f"Grafik_Verisi_{time_str_file}_{ms}.csv"
+        now = datetime.datetime.now(); ms = now.strftime("%f")[:3]; time_str_file = now.strftime("%Y%m%d_%H%M%S")
+        time_str_log = now.strftime("%Y-%m-%d %H:%M:%S"); file_path = f"Grafik_Verisi_{time_str_file}_{ms}.csv"
 
         try:
             with open(file_path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f, delimiter=';')
-                
-                writer.writerow(["# METADATA BİLGİLERİ"])
-                writer.writerow(["# Test Zamanı", f"{time_str_log}.{ms}"])
-                writer.writerow(["# Spektrum Analizör IP", self.ip_sa.text()])
-                writer.writerow(["# Spektrum Analizör IDN", self.sa_idn])
-                writer.writerow(["# Sinyal Jeneratörü IP", self.ip_gen.text()])
-                writer.writerow(["# Sinyal Jeneratörü IDN", self.gen_idn])
-                writer.writerow(["# Merkez Frekans (MHz)", self.sa_center.text()])
-                writer.writerow(["# Span (MHz)", self.sa_span.text()])
-                
-                gen_durum = f"AÇIK (Freq: {CURRENT_SIGNAL['freq']} MHz, Güç: {CURRENT_SIGNAL['power']} dBm)" if CURRENT_SIGNAL["active"] else "KAPALI"
-                writer.writerow(["# Jeneratör Durumu", gen_durum])
+                writer.writerow(["# METADATA BİLGİLERİ"]); writer.writerow(["# Test Zamanı", f"{time_str_log}.{ms}"])
+                writer.writerow(["# Spektrum Analizör IP", self.ip_sa.text()]); writer.writerow(["# Spektrum Analizör IDN", self.sa_idn])
+                writer.writerow(["# Merkez Frekans (MHz)", self.sa_center.text()]); writer.writerow(["# Span (MHz)", self.sa_span.text()])
                 writer.writerow([])
-                
                 writer.writerow(["Frekans (MHz)", "Guc (dBm)"])
                 for i in range(len(self.current_trace_x)):
                     writer.writerow([f"{self.current_trace_x[i]:.4f}", f"{self.current_trace_y[i]:.2f}"])
-                    
-            QMessageBox.information(self, "Başarılı", f"Grafik Datası otomatik kaydedildi:\n{file_path}")
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Hata", f"CSV kaydedilemedi: {e}")
+            QMessageBox.information(self, "Başarılı", f"Grafik Datası kaydedildi:\n{file_path}")
+        except Exception as e: QMessageBox.critical(self, "Hata", f"CSV kaydedilemedi: {e}")
 
     def debug_log_save(self):
         csv_name = f"Log_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
@@ -1055,9 +1142,7 @@ class MainWindow(QMainWindow):
                 for i, line in enumerate(lines):
                     if progress.wasCanceled(): break 
                     parts = line.strip().split('|')
-                    if len(parts) == 18:
-                        parts.insert(17, "0")
-                        
+                    if len(parts) == 18: parts.insert(17, "0")
                     writer.writerow(parts)
                     if i % 50 == 0: progress.setValue(i); QApplication.processEvents()
                 progress.setValue(total_lines) 
@@ -1091,21 +1176,32 @@ class MainWindow(QMainWindow):
             self.combo_ports.setEnabled(True); self.chk_sim_dut.setEnabled(True)
 
     def toggle_continuous_measure(self):
-        if self.sa_worker is not None and self.sa_worker.isRunning():
+        if not self.sa_is_connected or not self.sa_driver:
+            QMessageBox.warning(self, "Hata", "Önce Spektrum Analizöre Bağlanın!"); return
+            
+        if self.sa_worker and self.sa_worker.isRunning():
             self.sa_worker.stop(); self.sa_worker.wait(); self.sa_worker = None
             self.btn_sa_cont.setText("SÜREKLİ ÖLÇÜM"); self.btn_sa_cont.setStyleSheet(STYLE_GREEN)
             self.debug_log({"source": "ANALYZER", "event": "LOOP_STOP", "ip_port": self.ip_sa.text(), "msg": "Ölçüm Durduruldu.", "data_content": "0"})
         else:
             params = {'center': self._to_double(self.sa_center.text()), 'span': self._to_double(self.sa_span.text()), 'ref': self._to_double(self.sa_ref.text()), 'rbw': self._to_double(self.sa_rbw.text())}
-            self.sa_worker = AnalyzerWorker(self.ip_sa.text(), 'CONTINUOUS', params)
-            self.sa_worker.log_signal.connect(self.debug_log); self.sa_worker.start()
+            self.sa_current_params = params
+            self.sa_worker = AnalyzerWorker(self.sa_driver, 'CONTINUOUS', params)
+            self.sa_worker.log_signal.connect(self.debug_log)
+            self.sa_worker.trace_signal.connect(self.update_graph)
+            self.sa_worker.start()
             self.btn_sa_cont.setText("DURDUR"); self.btn_sa_cont.setStyleSheet(STYLE_RED)
 
     def run_analyzer(self, mode):
-        if mode == 'SINGLE_SHOT' and self.sa_worker is not None and self.sa_worker.isRunning(): self.toggle_continuous_measure()
+        if not self.sa_is_connected or not self.sa_driver:
+            QMessageBox.warning(self, "Hata", "Önce Spektrum Analizöre Bağlanın!"); return
+            
+        if mode == 'SINGLE_SHOT' and self.sa_worker and self.sa_worker.isRunning(): self.toggle_continuous_measure()
         params = {'center': self._to_double(self.sa_center.text()), 'span': self._to_double(self.sa_span.text()), 'ref': self._to_double(self.sa_ref.text()), 'rbw': self._to_double(self.sa_rbw.text())}
-        self.sa_worker = AnalyzerWorker(self.ip_sa.text(), mode, params)
-        self.sa_worker.log_signal.connect(self.debug_log); self.sa_worker.start()
+        self.sa_worker = AnalyzerWorker(self.sa_driver, mode, params)
+        self.sa_worker.log_signal.connect(self.debug_log)
+        self.sa_worker.trace_signal.connect(self.update_graph)
+        self.sa_worker.start()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
