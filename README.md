@@ -20,7 +20,7 @@ Aşağıdaki dosyaların **aynı klasör içinde** bulunduğundan emin olun:
 - `ps_driver.py` → Güç kaynağı sürücüsü
 - `rs_drivers.py` → Jeneratör ve analizör sürücüsü
 - `dut_driver.py` → DUT sürücüsü
-- `metadata.json` ve `rf_scenerio.json` → Test tanımlama dosyaları
+- `metadata.json` ve `rf_scenerio.json` → Test tanımlama dosyaları (Arayüzü test ederken rf_scenerio.json kullanımı önerilir)
 - `/attachments klasörü` → Test için ek dosyalar
 ---
 
