@@ -26,10 +26,11 @@ from dut_driver import DutHandler
 from ps_driver import PowerSupplyDriver 
 
 # ==========================================
-# AYARLAR
+# AYARLAR VE GLOBAL DEĞİŞKENLER
 # ==========================================
 REFRESH_RATE = 0.1
 CURRENT_SIGNAL = { "active": False, "freq": 0.0, "power": -140.0 }
+GEN_RF_STATE = 0 # 0: RF OFF, 1: RF ON (CSV için takip değişkeni)
 
 # --- RENK PALETİ ---
 STYLE_GREEN = "background-color: #d1e7dd; color: #146c43; font-weight: bold;" 
@@ -39,7 +40,7 @@ STYLE_YELLOW= "background-color: #fff3cd; color: #664d03; font-weight: bold;"
 STYLE_GRAY  = "background-color: #e2e3e5; color: #000000; font-weight: bold;" 
 
 # ==========================================
-# CUSTOM WIDGET: UDEMY STYLE TEST STEP
+# CUSTOM WIDGET: TEST ADIMI
 # ==========================================
 class TestStepWidget(QFrame):
     toggled_signal = pyqtSignal(int, bool)
@@ -165,8 +166,9 @@ class GeneratorWorker(QThread):
         self.running = True
         
     def update_virtual_signal(self, active, freq, power):
-        global CURRENT_SIGNAL
+        global CURRENT_SIGNAL, GEN_RF_STATE
         CURRENT_SIGNAL["active"] = active; CURRENT_SIGNAL["freq"] = float(freq); CURRENT_SIGNAL["power"] = float(power)
+        if active: GEN_RF_STATE = 1 # Sinyal uygulandığında RF_OUT durumunu 1 yap
         
     def run(self):
         try:
@@ -177,15 +179,16 @@ class GeneratorWorker(QThread):
             elif self.mode == 'PRESET':
                 self.driver.preset()
                 self.update_virtual_signal(False, 0, -140)
+                global GEN_RF_STATE; GEN_RF_STATE = 0
                 self.log_signal.emit({"source": "GENERATOR", "event": "PRESET", "msg": "Preset atıldı."})
             elif self.mode == 'SWEEP':
                 start, stop = float(self.params['start']), float(self.params['stop'])
                 step, dwell = float(self.params['step']), float(self.params['dwell'])
                 power = float(self.params['power'])
-                self.log_signal.emit({"source": "GENERATOR", "event": "SWEEP_START", "msg": "Sweep Başladı"})
+                self.log_signal.emit({"source": "GENERATOR", "event": "SWEEP_START", "msg": "Frekans Sweep Başladı"})
                 current_freq = start
                 while current_freq <= stop:
-                    if not self.running: self.log_signal.emit({"source": "GENERATOR", "event": "SWEEP_STOP", "msg": "Sweep Durduruldu"}); break
+                    if not self.running: self.log_signal.emit({"source": "GENERATOR", "event": "SWEEP_STOP", "msg": "Frekans Sweep Durduruldu"}); break
                     self.driver.apply_settings(current_freq, power)
                     self.update_virtual_signal(True, current_freq, power)
                     self.log_signal.emit({"source": "GENERATOR", "event": "SWEEP_STEP", "freq": current_freq, "msg": f"Sweep: {current_freq} MHz"})
@@ -194,31 +197,34 @@ class GeneratorWorker(QThread):
                         if not self.running: break
                         time.sleep(0.1); waited += 0.1
                     current_freq += step
-            elif self.mode == 'AM_SINE':
+            elif self.mode == 'POWER_SWEEP':
                 freq = float(self.params['freq'])
-                min_p, max_p = float(self.params['min_power']), float(self.params['max_power'])
-                speed = float(self.params['speed'])
-                self.log_signal.emit({"source": "GENERATOR", "event": "AM_START", "msg": "AM Başladı"})
+                start_p = float(self.params['start_p'])
+                stop_p = float(self.params['stop_p'])
+                step_p = float(self.params['step_p'])
+                dwell = float(self.params['dwell'])
                 
-                mid_val = (max_p + min_p) / 2
-                amplitude = (max_p - min_p) / 2
+                self.log_signal.emit({"source": "GENERATOR", "event": "LVL_SWEEP_START", "msg": f"Level Sweep Başladı ({start_p} dBm -> {stop_p} dBm)"})
                 
-                # --- ZAMANLAMA HATASI BURADA ÇÖZÜLDÜ ---
-                start_time = time.time()
+                current_power = start_p
+                direction = 1 if stop_p >= start_p else -1
+                step_p = abs(step_p) * direction
                 
                 while self.running:
-                    # Gerçek geçen süreyi hesaplıyoruz
-                    t = time.time() - start_time
-                    
-                    current_power = mid_val + amplitude * math.sin(speed * t)
+                    if (direction == 1 and current_power > stop_p) or (direction == -1 and current_power < stop_p):
+                        self.log_signal.emit({"source": "GENERATOR", "event": "LVL_SWEEP_STOP", "msg": "Level Sweep Bitti."})
+                        break
+                        
                     self.driver.apply_settings(freq, f"{current_power:.2f}")
                     self.update_virtual_signal(True, freq, current_power)
-                    self.log_signal.emit({"source": "GENERATOR", "event": "AM_STEP", "power": f"{current_power:.2f}", "msg": f"AM: {current_power:.2f} dBm"})
+                    self.log_signal.emit({"source": "GENERATOR", "event": "LVL_STEP", "power": f"{current_power:.2f}", "msg": f"Level Sweep: {current_power:.2f} dBm"})
                     
-                    # Sadece bekleme yapıyoruz, t'yi manuel artırmıyoruz
-                    time.sleep(REFRESH_RATE)
-                    
-                self.log_signal.emit({"source": "GENERATOR", "event": "AM_STOP", "msg": "AM Durduruldu"})
+                    waited = 0
+                    while waited < dwell:
+                        if not self.running: break
+                        time.sleep(0.1); waited += 0.1
+                        
+                    current_power += step_p
         except Exception as e: self.error_signal.emit({"source": "ERROR", "msg": f"Gen Hatası: {e}"})
     def stop(self): self.running = False
 
@@ -238,26 +244,23 @@ class AnalyzerWorker(QThread):
         self.running = True
         self.needs_update = False 
 
-    # SİMÜLASYON DEĞERLERİNİ CANLI SİNYAL İLE EZEN FONKSİYON
     def apply_simulation_effects(self, peak_x, peak_y, trace_y):
-        global CURRENT_SIGNAL
+        global CURRENT_SIGNAL, GEN_RF_STATE
         c = self.params['center']
         s = self.params['span']
         if s <= 0: s = 10.0
         
-        if CURRENT_SIGNAL["active"]:
+        # Eğer Sinyal Jeneratörünün RF durumu açıksa analizör okuyabilir
+        if CURRENT_SIGNAL["active"] and GEN_RF_STATE == 1:
             gen_f = CURRENT_SIGNAL["freq"]
             gen_p = CURRENT_SIGNAL["power"]
-            
-            # Jeneratörün frekansı analizörün ekranındaysa, tepe noktasını AM gücüne eşitle
             if (c - s/2) <= gen_f <= (c + s/2):
                 peak_x = gen_f
-                peak_y = gen_p + random.uniform(-0.3, 0.3) # Ufak gürültü ekle
+                peak_y = gen_p + random.uniform(-0.3, 0.3) 
             else:
                 peak_y = -110.0 + random.uniform(-2, 2)
         else:
             peak_y = -120.0 + random.uniform(-2, 2)
-            
         return peak_x, peak_y, trace_y
 
     def run(self):
@@ -269,10 +272,11 @@ class AnalyzerWorker(QThread):
                 
             if self.mode == 'SINGLE_SHOT':
                 self.driver.apply_settings(self.params['center'], self.params['span'], self.params['ref'], self.params['rbw'])
+                self.driver.set_run_mode('SINGLE_SHOT')
+                
                 peak_x, peak_y = self.driver.get_peak_marker()
                 trace_y = self.driver.get_trace_data()
                 
-                # Simülasyon modundaysa sahte veriyi Jeneratörün AM gücü ile değiştir
                 if self.driver.simulate:
                     peak_x, peak_y, trace_y = self.apply_simulation_effects(peak_x, peak_y, trace_y)
                 
@@ -286,6 +290,7 @@ class AnalyzerWorker(QThread):
             elif self.mode == 'CONTINUOUS':
                 self.log_signal.emit({"source": "ANALYZER", "event": "LOOP_START", "msg": "Sürekli Ölçüm Başladı..."})
                 self.driver.apply_settings(self.params['center'], self.params['span'], self.params['ref'], self.params['rbw'])
+                self.driver.set_run_mode('CONTINUOUS')
                 
                 while self.running:
                     if self.needs_update:
@@ -295,7 +300,6 @@ class AnalyzerWorker(QThread):
                     peak_x, peak_y = self.driver.get_peak_marker()
                     trace_y = self.driver.get_trace_data()
                     
-                    # Simülasyon modundaysa sahte veriyi Jeneratörün AM gücü ile değiştir
                     if self.driver.simulate:
                         peak_x, peak_y, trace_y = self.apply_simulation_effects(peak_x, peak_y, trace_y)
                     
@@ -309,6 +313,7 @@ class AnalyzerWorker(QThread):
         except Exception as e: self.error_signal.emit({"source": "ERROR", "msg": f"Spec Hatası: {e}"})
         
     def stop(self): self.running = False
+
 
 # ==========================================
 # MAIN GUI
@@ -369,11 +374,11 @@ class MainWindow(QMainWindow):
         scroll_precond.setWidget(self.precond_dynamic_widget)
         self.preconditions_layout.addWidget(scroll_precond)
 
-        self.btn_proceed = QPushButton("TÜM KOŞULLAR SAĞLANDI - TESTE BAŞLA")
-        self.btn_proceed.setStyleSheet(STYLE_GRAY)
-        self.btn_proceed.setEnabled(False)
+        self.btn_proceed = QPushButton("TESTE BAŞLA")
+        self.btn_proceed.setStyleSheet(STYLE_GRAY) # Başlangıçta gri
+        self.btn_proceed.setEnabled(False)         # Başlangıçta kilitli
         self.btn_proceed.setMinimumHeight(50)
-        self.btn_proceed.clicked.connect(lambda: self.tabs.setCurrentIndex(1)) 
+        self.btn_proceed.clicked.connect(self.start_test_clicked) 
         self.preconditions_layout.addWidget(self.btn_proceed)
 
         self.precondition_checkboxes = []
@@ -448,17 +453,33 @@ class MainWindow(QMainWindow):
 
         # 2. GÜÇ KAYNAĞI
         ps_grp = QGroupBox("2. Güç Kaynağı")
-        ps_form = QFormLayout()
+        ps_main_layout = QVBoxLayout(ps_grp)
+        
+        ps_top_form = QFormLayout()
         self.combo_ports_ps = QComboBox() 
         self.chk_sim_ps = QCheckBox("Simülasyon Modu"); self.chk_sim_ps.setChecked(True) 
+        ps_btn_layout1 = QHBoxLayout()
+        self.btn_ps_connect = QPushButton("BAĞLAN"); self.btn_ps_connect.setStyleSheet(STYLE_GREEN); self.btn_ps_connect.clicked.connect(self.toggle_ps_connect)
+        ps_btn_layout1.addWidget(self.btn_ps_connect)
+        
+        ps_top_form.addRow("Port:", self.combo_ports_ps)
+        ps_top_form.addRow(self.chk_sim_ps)
+        ps_top_form.addRow(ps_btn_layout1)
+        ps_main_layout.addLayout(ps_top_form)
+
+        self.btn_toggle_ps = QPushButton()
+        self.btn_toggle_ps.setStyleSheet("text-align: left; color: #084298; border: none; font-size: 13px; font-weight: bold; margin-top: 5px;")
+        self.btn_toggle_ps.setCursor(Qt.CursorShape.PointingHandCursor)
+        ps_main_layout.addWidget(self.btn_toggle_ps)
+
+        self.ps_settings_widget = QWidget()
+        ps_form = QFormLayout(self.ps_settings_widget)
+        ps_form.setContentsMargins(0,0,0,0)
+        
         self.ps_volt = QLineEdit("12.0"); self.ps_volt.setValidator(self.only_double)
         self.ps_curr = QLineEdit("2.0"); self.ps_curr.setValidator(self.only_double)
         self.combo_ps_range = QComboBox(); self.combo_ps_range.addItems(["LOW (15V/7A)", "HIGH (30V/4A)"])
         
-        ps_btn_layout1 = QHBoxLayout()
-        self.btn_ps_connect = QPushButton("BAĞLAN"); self.btn_ps_connect.setStyleSheet(STYLE_GREEN); self.btn_ps_connect.clicked.connect(self.toggle_ps_connect)
-        ps_btn_layout1.addWidget(self.btn_ps_connect)
-
         ps_btn_layout2 = QHBoxLayout()
         self.btn_ps_apply = QPushButton("SET DEĞERLERİ GÖNDER"); self.btn_ps_apply.setStyleSheet(STYLE_BLUE); self.btn_ps_apply.clicked.connect(self.ps_apply_values)
         ps_btn_layout2.addWidget(self.btn_ps_apply)
@@ -473,51 +494,104 @@ class MainWindow(QMainWindow):
         self.lbl_ps_live_info.setStyleSheet("font-size: 13px; background: #e9ecef; padding: 6px; border-radius: 4px; color: #212529; text-align: center;")
         self.lbl_ps_live_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        ps_form.addRow("Port:", self.combo_ports_ps); ps_form.addRow(self.chk_sim_ps); ps_form.addRow(ps_btn_layout1) 
         ps_form.addRow("Voltaj (V):", self.ps_volt); ps_form.addRow("Akım (A):", self.ps_curr); ps_form.addRow("Aralık:", self.combo_ps_range)
         ps_form.addRow(ps_btn_layout2); ps_form.addRow(ps_btn_layout3); ps_form.addRow(self.btn_ps_err); ps_form.addRow(self.lbl_ps_live_info) 
-        ps_grp.setLayout(ps_form); controls_vbox.addWidget(ps_grp)
+        
+        ps_main_layout.addWidget(self.ps_settings_widget)
+        self.setup_collapsible(self.btn_toggle_ps, self.ps_settings_widget)
+        controls_vbox.addWidget(ps_grp)
 
         # 3. JENERATÖR
-        gen_grp = QGroupBox("3. Sinyal Jeneratörü"); gen_form = QFormLayout()
+        gen_grp = QGroupBox("3. Sinyal Jeneratörü")
+        gen_main_layout = QVBoxLayout(gen_grp)
+        
+        gen_top_form = QFormLayout()
         self.ip_gen = QLineEdit("192.168.1.50"); self.ip_gen.setValidator(ip_validator)
         self.chk_sim_gen = QCheckBox("Simülasyon Modu"); self.chk_sim_gen.setChecked(False)
         self.combo_gen_conn = QComboBox(); self.combo_gen_conn.addItems(["INSTR", "hislip0", "inst0", "socket"])
         self.btn_gen_connect = QPushButton("BAĞLAN"); self.btn_gen_connect.setStyleSheet(STYLE_GREEN); self.btn_gen_connect.clicked.connect(self.toggle_gen_connect)
+        
+        gen_top_form.addRow("Cihaz IP:", self.ip_gen)
+        gen_top_form.addRow("Bağlantı:", self.combo_gen_conn)
+        gen_top_form.addRow(self.chk_sim_gen)
+        gen_top_form.addRow(self.btn_gen_connect)
+        gen_main_layout.addLayout(gen_top_form)
 
-        self.combo_gen_mode = QComboBox(); self.combo_gen_mode.addItems(["Sabit Sinyal", "Sweep", "AM Modülasyon (Güç Değişimi)"])
+        self.btn_toggle_gen = QPushButton()
+        self.btn_toggle_gen.setStyleSheet("text-align: left; color: #084298; border: none; font-size: 13px; font-weight: bold; margin-top: 5px;")
+        self.btn_toggle_gen.setCursor(Qt.CursorShape.PointingHandCursor)
+        gen_main_layout.addWidget(self.btn_toggle_gen)
+
+        self.gen_settings_widget = QWidget()
+        gen_form = QFormLayout(self.gen_settings_widget)
+        gen_form.setContentsMargins(0,0,0,0)
+
+        # RF ON/OFF Butonları Başlatın üstüne taşındı
+        gen_rf_layout = QHBoxLayout()
+        self.btn_gen_rf_on = QPushButton("RF ON"); self.btn_gen_rf_on.setStyleSheet(STYLE_YELLOW); self.btn_gen_rf_on.clicked.connect(lambda: self.gen_set_output(True))
+        self.btn_gen_rf_off = QPushButton("RF OFF"); self.btn_gen_rf_off.setStyleSheet(STYLE_RED); self.btn_gen_rf_off.clicked.connect(lambda: self.gen_set_output(False))
+        gen_rf_layout.addWidget(self.btn_gen_rf_on); gen_rf_layout.addWidget(self.btn_gen_rf_off)
+
+        self.combo_gen_mode = QComboBox(); self.combo_gen_mode.addItems(["Sabit Sinyal", "Frekans Sweep", "Level Sweep (Güç)"])
         self.combo_gen_mode.currentIndexChanged.connect(self.update_gen_ui)
         self.freq_gen = QLineEdit("2400"); self.freq_gen.setValidator(self.only_double)
         self.pow_gen = QLineEdit("-10"); self.pow_gen.setValidator(self.only_double)
+        
         self.sweep_start = QLineEdit("2400"); self.sweep_start.setValidator(self.only_double)
         self.sweep_stop = QLineEdit("2500"); self.sweep_stop.setValidator(self.only_double)
         self.sweep_step = QLineEdit("10"); self.sweep_step.setValidator(self.only_double)
         self.sweep_dwell = QLineEdit("0.5"); self.sweep_dwell.setValidator(self.only_double)
-        self.am_min_pow = QLineEdit("-30"); self.am_min_pow.setValidator(self.only_double)
-        self.am_max_pow = QLineEdit("-10"); self.am_max_pow.setValidator(self.only_double)
-        self.am_speed = QLineEdit("1.0"); self.am_speed.setValidator(self.only_double)
+        
+        self.lvl_start = QLineEdit("-30"); self.lvl_start.setValidator(self.only_double)
+        self.lvl_stop = QLineEdit("-10"); self.lvl_stop.setValidator(self.only_double)
+        self.lvl_step = QLineEdit("1.0"); self.lvl_step.setValidator(self.only_double)
+        self.lvl_dwell = QLineEdit("0.5"); self.lvl_dwell.setValidator(self.only_double)
+        
         self.btn_gen_start = QPushButton("BAŞLAT"); self.btn_gen_start.setStyleSheet(STYLE_GREEN); self.btn_gen_start.clicked.connect(self.toggle_generator)
         
-        gen_form.addRow("Cihaz IP:", self.ip_gen)
-        gen_form.addRow("Bağlantı:", self.combo_gen_conn)
-        gen_form.addRow(self.chk_sim_gen)
-        gen_form.addRow(self.btn_gen_connect)
         gen_form.addRow("Mod Seçimi:", self.combo_gen_mode)
-        gen_form.addRow("Frekans (MHz):", self.freq_gen); gen_form.addRow("Sabit Güç (dBm):", self.pow_gen)
-        gen_form.addRow("Sweep Başlangıç (MHz):", self.sweep_start); gen_form.addRow("Sweep Bitiş (MHz):", self.sweep_stop)
-        gen_form.addRow("Sweep Adım (MHz):", self.sweep_step); gen_form.addRow("Bekleme Süresi (s):", self.sweep_dwell)
-        gen_form.addRow("AM Min Güç (dBm):", self.am_min_pow); gen_form.addRow("AM Max Güç (dBm):", self.am_max_pow)
-        gen_form.addRow("AM Hızı (Rad/s):", self.am_speed); gen_form.addRow(self.btn_gen_start)
-        gen_grp.setLayout(gen_form); controls_vbox.addWidget(gen_grp)
+        gen_form.addRow("Frekans (MHz):", self.freq_gen)
+        gen_form.addRow("Sabit Güç (dBm):", self.pow_gen)
+        gen_form.addRow("Frekans Başlangıç (MHz):", self.sweep_start)
+        gen_form.addRow("Frekans Bitiş (MHz):", self.sweep_stop)
+        gen_form.addRow("Frekans Adım (MHz):", self.sweep_step)
+        gen_form.addRow("Frekans Bekleme (s):", self.sweep_dwell)
+        gen_form.addRow("Level Başlangıç (dBm):", self.lvl_start)
+        gen_form.addRow("Level Bitiş (dBm):", self.lvl_stop)
+        gen_form.addRow("Level Adım (dBm):", self.lvl_step)
+        gen_form.addRow("Level Bekleme (s):", self.lvl_dwell)
+        gen_form.addRow(gen_rf_layout) # RF Butonları Başlatın hemen üstünde
+        gen_form.addRow(self.btn_gen_start)
+        
+        gen_main_layout.addWidget(self.gen_settings_widget)
+        self.setup_collapsible(self.btn_toggle_gen, self.gen_settings_widget)
+        controls_vbox.addWidget(gen_grp)
 
         # 4. ANALİZÖR
-        sa_grp = QGroupBox("4. Spektrum Analizör"); sa_form = QFormLayout()
+        sa_grp = QGroupBox("4. Spektrum Analizör")
+        sa_main_layout = QVBoxLayout(sa_grp)
+        
+        sa_top_form = QFormLayout()
         self.ip_sa = QLineEdit("192.168.1.51"); self.ip_sa.setValidator(ip_validator)
         self.chk_sim_sa = QCheckBox("Simülasyon Modu"); self.chk_sim_sa.setChecked(False)
         self.combo_sa_conn = QComboBox(); self.combo_sa_conn.addItems(["INSTR", "hislip0", "inst0", "socket"])
-        
         self.btn_sa_connect = QPushButton("BAĞLAN"); self.btn_sa_connect.setStyleSheet(STYLE_GREEN)
         self.btn_sa_connect.clicked.connect(self.toggle_sa_connect)
+        
+        sa_top_form.addRow("Cihaz IP:", self.ip_sa)
+        sa_top_form.addRow("Bağlantı:", self.combo_sa_conn)
+        sa_top_form.addRow(self.chk_sim_sa)
+        sa_top_form.addRow(self.btn_sa_connect)
+        sa_main_layout.addLayout(sa_top_form)
+
+        self.btn_toggle_sa = QPushButton()
+        self.btn_toggle_sa.setStyleSheet("text-align: left; color: #084298; border: none; font-size: 13px; font-weight: bold; margin-top: 5px;")
+        self.btn_toggle_sa.setCursor(Qt.CursorShape.PointingHandCursor)
+        sa_main_layout.addWidget(self.btn_toggle_sa)
+
+        self.sa_settings_widget = QWidget()
+        sa_form = QFormLayout(self.sa_settings_widget)
+        sa_form.setContentsMargins(0,0,0,0)
         
         self.sa_center = QLineEdit("2400"); self.sa_center.setValidator(self.only_double)
         self.sa_span = QLineEdit("10"); self.sa_span.setValidator(self.only_double)
@@ -532,15 +606,14 @@ class MainWindow(QMainWindow):
         self.btn_sa_cont = QPushButton("SÜREKLİ ÖLÇÜM"); self.btn_sa_cont.setStyleSheet(STYLE_GREEN); self.btn_sa_cont.clicked.connect(self.toggle_continuous_measure)
         btn_layout.addWidget(self.btn_sa_single); btn_layout.addWidget(self.btn_sa_cont)
         
-        sa_form.addRow("Cihaz IP:", self.ip_sa)
-        sa_form.addRow("Bağlantı:", self.combo_sa_conn)
-        sa_form.addRow(self.chk_sim_sa)
-        sa_form.addRow(self.btn_sa_connect)
         sa_form.addRow("Center Freq (MHz):", self.sa_center); sa_form.addRow("Span (MHz):", self.sa_span)
         sa_form.addRow("Ref Level (dBm):", self.sa_ref); sa_form.addRow("RBW (kHz):", self.sa_rbw)
         sa_form.addRow(self.btn_sa_apply)
         sa_form.addRow(btn_layout)
-        sa_grp.setLayout(sa_form); controls_vbox.addWidget(sa_grp)
+        
+        sa_main_layout.addWidget(self.sa_settings_widget)
+        self.setup_collapsible(self.btn_toggle_sa, self.sa_settings_widget)
+        controls_vbox.addWidget(sa_grp)
 
         # 5. GLOBAL KONTROLLER
         glob_grp = QGroupBox("Genel Kontrol"); glob_lay = QVBoxLayout()
@@ -562,6 +635,7 @@ class MainWindow(QMainWindow):
         log_lay = QVBoxLayout(self.tab_log)
         log_lay.setContentsMargins(0,0,0,0)
         self.log_area = QTextEdit(); self.log_area.setReadOnly(True)
+        self.log_area.setStyleSheet("QTextEdit { border: none; background: transparent; }")
         log_lay.addWidget(self.log_area)
         self.center_tabs.addTab(self.tab_log, "Log Ekranı")
 
@@ -603,6 +677,21 @@ class MainWindow(QMainWindow):
         self.refresh_ports()
         self.update_gen_ui()
         self.load_metadata(None)
+
+    def setup_collapsible(self, btn_toggle, widget):
+        def on_toggle():
+            is_visible = not widget.isVisible()
+            widget.setVisible(is_visible)
+            arrow = "▼" if is_visible else "▶"
+            btn_toggle.setText(f"{arrow} Ayarları Gizle/Göster")
+        btn_toggle.clicked.connect(on_toggle)
+        widget.setVisible(False)
+        btn_toggle.setText("▶ Ayarları Gizle/Göster")
+
+    def start_test_clicked(self):
+        self.tabs.setTabEnabled(1, True)
+        self.tabs.setTabEnabled(2, True)
+        self.tabs.setCurrentIndex(1)
 
     def clear_layout(self, layout):
         if layout is not None:
@@ -649,7 +738,7 @@ class MainWindow(QMainWindow):
             self.ps_volt.setText(str(ps_v))
             self.ps_curr.setText(str(ps_i))
             
-            self.combo_gen_mode.setCurrentText("Sweep")
+            self.combo_gen_mode.setCurrentText("Frekans Sweep")
             self.update_gen_ui()
             self.sweep_start.setText(str(start))
             self.sweep_stop.setText(str(stop))
@@ -684,6 +773,7 @@ class MainWindow(QMainWindow):
 
     # --- JENERATÖR BAĞLANTI FONKSİYONLARI ---
     def toggle_gen_connect(self):
+        global GEN_RF_STATE
         if not self.gen_is_connected:
             if not self.ip_gen.hasAcceptableInput() and not self.chk_sim_gen.isChecked():
                 QMessageBox.warning(self, "Hata", "Geçersiz IP Formatı!"); return
@@ -706,13 +796,29 @@ class MainWindow(QMainWindow):
             if self.gen_worker and self.gen_worker.isRunning():
                 self.toggle_generator() 
             if self.gen_driver:
+                try: 
+                    self.gen_driver.set_rf_output(False)
+                    GEN_RF_STATE = 0
+                except: pass
                 try: self.gen_driver.disconnect()
                 except: pass
             
-            self.debug_log({"source": "GENERATOR", "event": "DISCONNECT", "ip_port": self.ip_gen.text(), "msg": "GEN Bağlantısı Kesildi"})
+            self.debug_log({"source": "GENERATOR", "event": "DISCONNECT", "ip_port": self.ip_gen.text(), "msg": "GEN Bağlantısı Kesildi (RF OFF Gönderildi)"})
             self.btn_gen_connect.setText("BAĞLAN"); self.btn_gen_connect.setStyleSheet(STYLE_GREEN)
             self.ip_gen.setEnabled(True); self.chk_sim_gen.setEnabled(True); self.combo_gen_conn.setEnabled(True)
             self.gen_is_connected = False; self.gen_driver = None
+
+    def gen_set_output(self, state):
+        global GEN_RF_STATE
+        if not self.gen_is_connected or not self.gen_driver:
+            QMessageBox.warning(self, "Hata", "Önce Jeneratöre Bağlanın!"); return
+        try:
+            self.gen_driver.set_rf_output(state)
+            GEN_RF_STATE = 1 if state else 0
+            msg = "RF ON (Açık)" if state else "RF OFF (Kapalı)"
+            self.debug_log({"source": "GENERATOR", "event": "RF_OUTPUT", "ip_port": self.ip_gen.text(), "msg": msg})
+        except Exception as e:
+            self.debug_log({"source": "ERROR", "msg": f"GEN RF Hatası: {e}"})
 
     # --- SA BAĞLANTI & CANLI AYAR FONKSİYONLARI ---
     def toggle_sa_connect(self):
@@ -757,7 +863,6 @@ class MainWindow(QMainWindow):
         
         self.sa_current_params = {'center': c, 'span': s, 'ref': r, 'rbw': rbw}
         
-        # Eğer okuma döngüsü açıksa, yeni parametreleri bayrakla thread'e gönder
         if self.sa_worker and self.sa_worker.isRunning():
             self.sa_worker.params = self.sa_current_params
             self.sa_worker.needs_update = True
@@ -878,8 +983,6 @@ class MainWindow(QMainWindow):
         self.precondition_checkboxes.clear()
         self.step_widgets.clear()
         self.current_json_data = None
-        self.btn_proceed.setEnabled(False)
-        self.btn_proceed.setStyleSheet(STYLE_GRAY)
         self.tabs.setTabEnabled(1, False)
         self.tabs.setTabEnabled(2, False)
 
@@ -925,10 +1028,6 @@ class MainWindow(QMainWindow):
                             cb.toggled.connect(self.check_preconditions_state)
                             self.precond_dynamic_layout.addWidget(cb); self.precondition_checkboxes.append(cb)
 
-            if not self.precondition_checkboxes:
-                self.tabs.setTabEnabled(1, True); self.tabs.setTabEnabled(2, True)
-                self.btn_proceed.setEnabled(True); self.btn_proceed.setStyleSheet(STYLE_GREEN)
-
             steps_list = tests[0].get("steps", [])
             for s in steps_list:
                 idx = s.get("index"); action = s.get("action", "Adım"); expected = s.get("expected_result", ""); attachments = s.get("attachments", [])
@@ -955,7 +1054,8 @@ class MainWindow(QMainWindow):
             self.chk_select_all.blockSignals(True) 
             self.chk_select_all.setChecked(all_checked)
             self.chk_select_all.blockSignals(False)
-        self.tabs.setTabEnabled(1, all_checked); self.tabs.setTabEnabled(2, all_checked)
+
+        # DEĞİŞTİRİLECEK KISIM: Sadece butonun rengini ve tıklanabilirliğini değiştirir
         if hasattr(self, 'btn_proceed'):
             self.btn_proceed.setEnabled(all_checked)
             self.btn_proceed.setStyleSheet(STYLE_GREEN if all_checked else STYLE_GRAY)
@@ -984,24 +1084,35 @@ class MainWindow(QMainWindow):
 
     def update_gen_ui(self):
         mode = self.combo_gen_mode.currentText()
-        self.freq_gen.setEnabled(True); self.pow_gen.setEnabled(True)
+        
+        self.freq_gen.setEnabled(False); self.pow_gen.setEnabled(False)
         self.sweep_start.setEnabled(False); self.sweep_stop.setEnabled(False)
         self.sweep_step.setEnabled(False); self.sweep_dwell.setEnabled(False)
-        self.am_min_pow.setEnabled(False); self.am_max_pow.setEnabled(False); self.am_speed.setEnabled(False)
+        self.lvl_start.setEnabled(False); self.lvl_stop.setEnabled(False)
+        self.lvl_step.setEnabled(False); self.lvl_dwell.setEnabled(False)
         self.btn_gen_start.setText("BAŞLAT") 
-        if mode == "Sweep":
-            self.freq_gen.setEnabled(False); self.sweep_start.setEnabled(True); self.sweep_stop.setEnabled(True)
+        
+        if mode == "Sabit Sinyal":
+            self.freq_gen.setEnabled(True)
+            self.pow_gen.setEnabled(True)
+        elif mode == "Frekans Sweep":
+            self.pow_gen.setEnabled(True)
+            self.sweep_start.setEnabled(True); self.sweep_stop.setEnabled(True)
             self.sweep_step.setEnabled(True); self.sweep_dwell.setEnabled(True)
-        elif mode == "AM Modülasyon (Güç Değişimi)":
-            self.pow_gen.setEnabled(False); self.am_min_pow.setEnabled(True); self.am_max_pow.setEnabled(True); self.am_speed.setEnabled(True)
+        elif mode == "Level Sweep (Güç)":
+            self.freq_gen.setEnabled(True)
+            self.lvl_start.setEnabled(True); self.lvl_stop.setEnabled(True)
+            self.lvl_step.setEnabled(True); self.lvl_dwell.setEnabled(True)
 
     def set_gen_inputs_enabled(self, enabled):
         self.combo_gen_mode.setEnabled(enabled)
-        self.freq_gen.setEnabled(enabled); self.pow_gen.setEnabled(enabled)
-        self.sweep_start.setEnabled(enabled); self.sweep_stop.setEnabled(enabled)
-        self.sweep_step.setEnabled(enabled); self.sweep_dwell.setEnabled(enabled)
-        self.am_min_pow.setEnabled(enabled); self.am_max_pow.setEnabled(enabled); self.am_speed.setEnabled(enabled)
-        if enabled: self.update_gen_ui() 
+        if enabled: self.update_gen_ui()
+        else:
+            self.freq_gen.setEnabled(False); self.pow_gen.setEnabled(False)
+            self.sweep_start.setEnabled(False); self.sweep_stop.setEnabled(False)
+            self.sweep_step.setEnabled(False); self.sweep_dwell.setEnabled(False)
+            self.lvl_start.setEnabled(False); self.lvl_stop.setEnabled(False)
+            self.lvl_step.setEnabled(False); self.lvl_dwell.setEnabled(False)
 
     def toggle_generator(self):
         if not self.gen_is_connected or not self.gen_driver:
@@ -1016,14 +1127,16 @@ class MainWindow(QMainWindow):
         
         if mode_text == "Sabit Sinyal":
             mode_code = 'SINGLE'; params = {'freq': self._to_double(self.freq_gen.text()), 'power': self._to_double(self.pow_gen.text())}
-        elif mode_text == "Sweep":
+        elif mode_text == "Frekans Sweep":
             step_val = self._to_double(self.sweep_step.text())
             if step_val == 0.0: QMessageBox.warning(self, "Hata", "Sweep Adım değeri 0 olamaz!"); return
             mode_code = 'SWEEP'
             params = {'start': self._to_double(self.sweep_start.text()), 'stop': self._to_double(self.sweep_stop.text()), 'step': step_val, 'dwell': self._to_double(self.sweep_dwell.text()), 'power': self._to_double(self.pow_gen.text())}
-        elif mode_text == "AM Modülasyon (Güç Değişimi)":
-            mode_code = 'AM_SINE'
-            params = {'freq': self._to_double(self.freq_gen.text()), 'min_power': self._to_double(self.am_min_pow.text()), 'max_power': self._to_double(self.am_max_pow.text()), 'speed': self._to_double(self.am_speed.text())}
+        elif mode_text == "Level Sweep (Güç)":
+            step_val = self._to_double(self.lvl_step.text())
+            if step_val == 0.0: QMessageBox.warning(self, "Hata", "Adım değeri 0 olamaz!"); return
+            mode_code = 'POWER_SWEEP'
+            params = {'freq': self._to_double(self.freq_gen.text()), 'start_p': self._to_double(self.lvl_start.text()), 'stop_p': self._to_double(self.lvl_stop.text()), 'step_p': step_val, 'dwell': self._to_double(self.lvl_dwell.text())}
                       
         self.gen_worker = GeneratorWorker(self.gen_driver, mode_code, params)
         self.gen_worker.log_signal.connect(self.debug_log); self.gen_worker.error_signal.connect(self.debug_log)
@@ -1045,9 +1158,9 @@ class MainWindow(QMainWindow):
     # ==========================================
     @pyqtSlot(dict)
     def debug_log(self, data):
+        global GEN_RF_STATE
         now = datetime.datetime.now(); timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")
         msg = data.get("msg", ""); source = data.get("source", "UNKNOWN")
-        event = data.get("event", "")
         color = "black"
         
         if source == "DUT": color = "green"
@@ -1063,7 +1176,7 @@ class MainWindow(QMainWindow):
             timestamp_str, source, data.get('event', '0'), data.get('ip_port', '0'),
             str(data.get('freq', data.get('center', '0'))), str(data.get('power', data.get('ref', '0'))),
             g('start'), g('stop'), g('step'), g('dwell'), g('min_power'), g('max_power'), g('speed'),
-            g('span'), g('rbw'), g('volt'), g('curr'), str(data.get('idn', '0')), data.get('data_content', '0')
+            g('span'), g('rbw'), g('volt'), g('curr'), str(data.get('idn', '0')), str(GEN_RF_STATE), data.get('data_content', '0')
         ]
         try: 
             with open(self.temp_filename, 'a', encoding='utf-8') as f: f.write("|".join(row) + "\n")
@@ -1090,9 +1203,6 @@ class MainWindow(QMainWindow):
             self.gen_marker.show()
         else: self.gen_marker.hide()
 
-    # ==========================================
-    # GRAFİK DIŞA AKTARIM FONKSİYONLARI
-    # ==========================================
     def export_graph_png(self):
         now = datetime.datetime.now(); ms = now.strftime("%f")[:3]; time_str_file = now.strftime("%Y%m%d_%H%M%S")
         file_path = f"Spektrum_Grafik_{time_str_file}_{ms}.png"
@@ -1138,11 +1248,11 @@ class MainWindow(QMainWindow):
                 writer = csv.writer(f_out, delimiter=';')
                 writer.writerow(["TIME", "SOURCE", "EVENT", "PORT", "FREQ/CENTER", "POWER/REF", 
                                  "START", "STOP", "STEP", "DWELL", "AM_MIN", "AM_MAX", "AM_SPEED", 
-                                 "SPAN", "RBW", "VOLT", "CURR", "IDN", "DATA"])
+                                 "SPAN", "RBW", "VOLT", "CURR", "IDN", "RF_OUT", "DATA"])
                 for i, line in enumerate(lines):
                     if progress.wasCanceled(): break 
                     parts = line.strip().split('|')
-                    if len(parts) == 18: parts.insert(17, "0")
+                    while len(parts) < 20: parts.append("0") # Yeni "RF_OUT" formatına uyumluluk için uzat
                     writer.writerow(parts)
                     if i % 50 == 0: progress.setValue(i); QApplication.processEvents()
                 progress.setValue(total_lines) 
