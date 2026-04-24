@@ -32,11 +32,16 @@ class SignalGeneratorDriver:
         return self.instr.query_str("*IDN?")
 
     def apply_settings(self, freq, power):
-        """Açık oturum üzerinden cihaz ayarlarını günceller"""
         if not self.instr: raise ConnectionError("Cihaza bağlı değil.")
         self.instr.write_str(f"FREQ {freq} MHz")
         self.instr.write_str(f"POW {power} dBm")
         self.instr.write_str("OUTP ON")
+
+    def set_rf_output(self, state):
+        if self.simulate: return
+        if not self.instr: raise ConnectionError("Cihaza bağlı değil.")
+        cmd = "OUTP ON" if state else "OUTP OFF"
+        self.instr.write_str(cmd)
 
     def preset(self):
         if not self.instr: raise ConnectionError("Cihaza bağlı değil.")
@@ -48,12 +53,10 @@ class SpectrumAnalyzerDriver:
         self.simulate = simulate
         self.ip_address = ip_address
         
-        # Simülasyonun 2400 MHz'de takılı kalmasını çözen değişkenler
         self.sim_center = 2400.0  
         self.sim_span = 10.0      
         
         sim_str = "Simulate=True" if simulate else ""
-        # Hislip, socket veya inst0 gibi bağlantı tiplerini destekler
         if conn_type == "INSTR":
             self.resource_str = f"TCPIP::{ip_address}::INSTR"
         else:
@@ -77,9 +80,6 @@ class SpectrumAnalyzerDriver:
         return self.instr.query_str("*IDN?")
 
     def apply_settings(self, center, span, ref, rbw):
-        """Açık oturum üzerinden cihaz ayarlarını günceller"""
-        
-        # Simülasyonun GUI'den gelen Center/Span ayarlarını öğrenmesini sağlar
         if self.simulate:
             self.sim_center = float(center)
             self.sim_span = float(span)
@@ -90,10 +90,18 @@ class SpectrumAnalyzerDriver:
         self.instr.write_str(f"DISP:TRAC:Y:RLEV {ref} dBm")
         self.instr.write_str(f"BAND:RES {rbw} kHz")
 
+    def set_run_mode(self, mode):
+        """Single/Continuous durum komutunu cihaza iletir"""
+        if self.simulate: return
+        if not self.instr: raise ConnectionError("Cihaza bağlı değil.")
+        if mode == 'SINGLE_SHOT':
+            self.instr.write_str("INIT:CONT OFF")  # Sürekli ölçümü kapat
+            self.instr.write_str("INIT:IMM; *WAI") # Tek ölçüm al ve bitene kadar bekle
+        elif mode == 'CONTINUOUS':
+            self.instr.write_str("INIT:CONT ON")   # Sürekli ölçümü aç
+
     def get_peak_marker(self):
-        """X ve Y değerlerinin her ikisini de okuyarak Peak Search yapar"""
         if self.simulate:
-            # Artık her zaman 2400 dönmez, arayüzden ayarladığınız frekansın etrafında dolaşır
             return (self.sim_center + random.uniform(-self.sim_span/10, self.sim_span/10), -20.0 + random.uniform(-0.5, 0.5))
             
         if not self.instr: raise ConnectionError("Cihaza bağlı değil.")
@@ -101,12 +109,10 @@ class SpectrumAnalyzerDriver:
         x_val = self.instr.query_float("CALC:MARK1:X?")
         y_val = self.instr.query_float("CALC:MARK1:Y?")
         
-        return (x_val / 1e6, y_val)  # X değerini Hz'den MHz'e çevirir
+        return (x_val / 1e6, y_val)  
 
     def get_trace_data(self):
-        """Gerçek cihazdan Trace (çizgi) array verisini ASCII formatında okur"""
         if self.simulate:
-            # Simülasyon modunda gürültülü sahte bir data üretir
             return np.random.normal(-115.0, 1.5, 501).tolist()
             
         if not self.instr: raise ConnectionError("Cihaza bağlı değil.")
