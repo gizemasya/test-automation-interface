@@ -16,21 +16,22 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                              QTextEdit, QGroupBox, QFormLayout, QComboBox, 
                              QMessageBox, QCheckBox, QProgressDialog, QTabWidget,
-                             QScrollArea, QFrame, QFileDialog)
+                             QScrollArea, QFrame, QFileDialog, QSizePolicy)
 from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot, QLocale, Qt, QUrl, QTimer, QRegularExpression
 from PyQt6.QtGui import QDoubleValidator, QFont, QDesktopServices, QRegularExpressionValidator
 
-# --- SÜRÜCÜLER ---
+# --- SÜRÜCÜLER VE OTONOM MOTOR ---
 from rs_drivers import SignalGeneratorDriver, SpectrumAnalyzerDriver
 from dut_driver import DutHandler
 from ps_driver import PowerSupplyDriver 
+from auto_test_engine import AutoTestProgressDialog
 
 # ==========================================
 # AYARLAR VE GLOBAL DEĞİŞKENLER
 # ==========================================
 REFRESH_RATE = 0.1
 CURRENT_SIGNAL = { "active": False, "freq": 0.0, "power": -140.0 }
-GEN_RF_STATE = 0 # 0: RF OFF, 1: RF ON (CSV için takip değişkeni)
+GEN_RF_STATE = 0 
 
 # --- RENK PALETİ ---
 STYLE_GREEN = "background-color: #d1e7dd; color: #146c43; font-weight: bold;" 
@@ -168,14 +169,14 @@ class GeneratorWorker(QThread):
     def update_virtual_signal(self, active, freq, power):
         global CURRENT_SIGNAL, GEN_RF_STATE
         CURRENT_SIGNAL["active"] = active; CURRENT_SIGNAL["freq"] = float(freq); CURRENT_SIGNAL["power"] = float(power)
-        if active: GEN_RF_STATE = 1 # Sinyal uygulandığında RF_OUT durumunu 1 yap
+        if active: GEN_RF_STATE = 1 
         
     def run(self):
         try:
             if self.mode == 'SINGLE':
                 self.driver.apply_settings(self.params['freq'], self.params['power'])
                 self.update_virtual_signal(True, self.params['freq'], self.params['power'])
-                self.log_signal.emit({"source": "GENERATOR", "event": "SINGLE_SET", "msg": f"Tek Sinyal: {self.params['freq']}MHz @ {self.params['power']}dBm"})
+                self.log_signal.emit({"source": "GENERATOR", "event": "SINGLE_SET", "freq": self.params['freq'], "power": self.params['power'], "msg": f"Tek Sinyal: {self.params['freq']}MHz @ {self.params['power']}dBm"})
             elif self.mode == 'PRESET':
                 self.driver.preset()
                 self.update_virtual_signal(False, 0, -140)
@@ -191,7 +192,7 @@ class GeneratorWorker(QThread):
                     if not self.running: self.log_signal.emit({"source": "GENERATOR", "event": "SWEEP_STOP", "msg": "Frekans Sweep Durduruldu"}); break
                     self.driver.apply_settings(current_freq, power)
                     self.update_virtual_signal(True, current_freq, power)
-                    self.log_signal.emit({"source": "GENERATOR", "event": "SWEEP_STEP", "freq": current_freq, "msg": f"Sweep: {current_freq} MHz"})
+                    self.log_signal.emit({"source": "GENERATOR", "event": "SWEEP_STEP", "freq": current_freq, "power": power, "msg": f"Sweep: {current_freq} MHz @ {power} dBm"})
                     waited = 0
                     while waited < dwell:
                         if not self.running: break
@@ -217,7 +218,7 @@ class GeneratorWorker(QThread):
                         
                     self.driver.apply_settings(freq, f"{current_power:.2f}")
                     self.update_virtual_signal(True, freq, current_power)
-                    self.log_signal.emit({"source": "GENERATOR", "event": "LVL_STEP", "power": f"{current_power:.2f}", "msg": f"Level Sweep: {current_power:.2f} dBm"})
+                    self.log_signal.emit({"source": "GENERATOR", "event": "LVL_STEP", "freq": freq, "power": f"{current_power:.2f}", "msg": f"Level Sweep: {current_power:.2f} dBm @ {freq} MHz"})
                     
                     waited = 0
                     while waited < dwell:
@@ -250,7 +251,6 @@ class AnalyzerWorker(QThread):
         s = self.params['span']
         if s <= 0: s = 10.0
         
-        # Eğer Sinyal Jeneratörünün RF durumu açıksa analizör okuyabilir
         if CURRENT_SIGNAL["active"] and GEN_RF_STATE == 1:
             gen_f = CURRENT_SIGNAL["freq"]
             gen_p = CURRENT_SIGNAL["power"]
@@ -284,7 +284,7 @@ class AnalyzerWorker(QThread):
                     "center": self.params['center'], "span": self.params['span'], 
                     "peak_x": peak_x, "peak_y": peak_y, "trace_y": trace_y
                 })
-                self.log_signal.emit({"source": "ANALYZER", "event": "MEASURE", "msg": f"Tek Ölçüm: {peak_y:.2f} dBm @ {peak_x:.2f} MHz"})
+                self.log_signal.emit({"source": "ANALYZER", "event": "MEASURE", "freq": f"{peak_x:.2f}", "power": f"{peak_y:.2f}", "data_content": f"{peak_y:.2f}", "msg": f"Tek Ölçüm: {peak_y:.2f} dBm @ {peak_x:.2f} MHz"})
                 return
                 
             elif self.mode == 'CONTINUOUS':
@@ -308,7 +308,7 @@ class AnalyzerWorker(QThread):
                         "peak_x": peak_x, "peak_y": peak_y, "trace_y": trace_y
                     })
                     
-                    self.log_signal.emit({"source": "ANALYZER", "event": "MEASURE", "msg": f"Sürekli: {peak_y:.2f} dBm @ {peak_x:.2f} MHz"})
+                    self.log_signal.emit({"source": "ANALYZER", "event": "MEASURE", "freq": f"{peak_x:.2f}", "power": f"{peak_y:.2f}", "data_content": f"{peak_y:.2f}", "msg": f"Sürekli: {peak_y:.2f} dBm @ {peak_x:.2f} MHz"})
                     time.sleep(REFRESH_RATE)
         except Exception as e: self.error_signal.emit({"source": "ERROR", "msg": f"Spec Hatası: {e}"})
         
@@ -331,6 +331,9 @@ class MainWindow(QMainWindow):
         self.gen_idn = "Bilinmiyor"
         self.current_json_data = None 
         
+        self.completed_steps = set()
+        self.autonomous_mode = True
+
         central = QWidget()
         self.setCentralWidget(central)
         main_wrapper = QVBoxLayout(central)
@@ -338,7 +341,6 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         main_wrapper.addWidget(self.tabs)
 
-        # IP VALIDATOR
         ip_regex = QRegularExpression(r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$")
         ip_validator = QRegularExpressionValidator(ip_regex)
 
@@ -375,8 +377,8 @@ class MainWindow(QMainWindow):
         self.preconditions_layout.addWidget(scroll_precond)
 
         self.btn_proceed = QPushButton("TESTE BAŞLA")
-        self.btn_proceed.setStyleSheet(STYLE_GRAY) # Başlangıçta gri
-        self.btn_proceed.setEnabled(False)         # Başlangıçta kilitli
+        self.btn_proceed.setStyleSheet(STYLE_GRAY) 
+        self.btn_proceed.setEnabled(False)         
         self.btn_proceed.setMinimumHeight(50)
         self.btn_proceed.clicked.connect(self.start_test_clicked) 
         self.preconditions_layout.addWidget(self.btn_proceed)
@@ -526,7 +528,6 @@ class MainWindow(QMainWindow):
         gen_form = QFormLayout(self.gen_settings_widget)
         gen_form.setContentsMargins(0,0,0,0)
 
-        # RF ON/OFF Butonları Başlatın üstüne taşındı
         gen_rf_layout = QHBoxLayout()
         self.btn_gen_rf_on = QPushButton("RF ON"); self.btn_gen_rf_on.setStyleSheet(STYLE_YELLOW); self.btn_gen_rf_on.clicked.connect(lambda: self.gen_set_output(True))
         self.btn_gen_rf_off = QPushButton("RF OFF"); self.btn_gen_rf_off.setStyleSheet(STYLE_RED); self.btn_gen_rf_off.clicked.connect(lambda: self.gen_set_output(False))
@@ -560,7 +561,7 @@ class MainWindow(QMainWindow):
         gen_form.addRow("Level Bitiş (dBm):", self.lvl_stop)
         gen_form.addRow("Level Adım (dBm):", self.lvl_step)
         gen_form.addRow("Level Bekleme (s):", self.lvl_dwell)
-        gen_form.addRow(gen_rf_layout) # RF Butonları Başlatın hemen üstünde
+        gen_form.addRow(gen_rf_layout) 
         gen_form.addRow(self.btn_gen_start)
         
         gen_main_layout.addWidget(self.gen_settings_widget)
@@ -639,9 +640,42 @@ class MainWindow(QMainWindow):
         log_lay.addWidget(self.log_area)
         self.center_tabs.addTab(self.tab_log, "Log Ekranı")
 
-        # --- SÜTUN 3: TEST ADIMLARI ---
-        steps_grp = QGroupBox("Test Senaryosu (Adımlar)"); steps_layout = QVBoxLayout()
-        self.steps_scroll = QScrollArea(); self.steps_scroll.setWidgetResizable(True)
+        # --- SÜTUN 3: OTONOM TEST PANELİ VE ADIMLAR ---
+        right_layout = QVBoxLayout()
+        
+        autonom_grp = QGroupBox("Otonom Test Yürütücü")
+        
+        autonom_lay = QVBoxLayout(autonom_grp)
+        
+        mode_btn_lay = QHBoxLayout()
+        self.btn_auto_mode = QPushButton("OTONOM MOD: ON")
+        self.btn_auto_mode.setStyleSheet(STYLE_GREEN)
+        self.btn_auto_mode.clicked.connect(self.toggle_autonomous_mode)
+        mode_btn_lay.addWidget(self.btn_auto_mode)
+        
+        self.btn_start_autonom = QPushButton("SEÇİLİ TESTLERİ BAŞLAT")
+        self.btn_start_autonom.setStyleSheet(STYLE_BLUE) # Log CSV butonu ile aynı renk ve tarz
+        self.btn_start_autonom.clicked.connect(self.start_autonomous_execution)
+        mode_btn_lay.addWidget(self.btn_start_autonom)
+        
+        autonom_lay.addLayout(mode_btn_lay)
+        right_layout.addWidget(autonom_grp)
+
+        steps_grp = QGroupBox("Test Senaryosu (Adımlar)")
+        steps_main_layout = QVBoxLayout(steps_grp)
+        steps_main_layout.setContentsMargins(5,5,5,5)
+
+        self.btn_toggle_steps = QPushButton()
+        self.btn_toggle_steps.setStyleSheet("text-align: left; color: #084298; border: none; font-size: 13px; font-weight: bold;")
+        self.btn_toggle_steps.setCursor(Qt.CursorShape.PointingHandCursor)
+        steps_main_layout.addWidget(self.btn_toggle_steps)
+
+        self.steps_wrapper_widget = QWidget()
+        steps_layout = QVBoxLayout(self.steps_wrapper_widget)
+        steps_layout.setContentsMargins(0,0,0,0)
+        
+        self.steps_scroll = QScrollArea()
+        self.steps_scroll.setWidgetResizable(True)
         self.steps_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }") 
         self.steps_container = QWidget()
         self.steps_container.setStyleSheet("background: transparent;")
@@ -649,12 +683,23 @@ class MainWindow(QMainWindow):
         self.steps_inner_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.steps_scroll.setWidget(self.steps_container)
         steps_layout.addWidget(self.steps_scroll)
-        steps_grp.setLayout(steps_layout)
+        
+        steps_main_layout.addWidget(self.steps_wrapper_widget)
+        
+        # ZIPLAMA SORUNU ÇÖZÜMÜ: Görünmez Spacer (İtici) Widget
+        self.steps_spacer = QWidget()
+        self.steps_spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        steps_main_layout.addWidget(self.steps_spacer)
+        
+        # Sadece Test Adımlarına Özel Collapsible Kurulumu
+        self.setup_collapsible_steps(self.btn_toggle_steps, self.steps_wrapper_widget, self.steps_spacer)
+        
+        right_layout.addWidget(steps_grp, stretch=1)
 
         # 4 : 5 : 5
         test_main_layout.addLayout(left_layout, 4)
         test_main_layout.addWidget(self.center_tabs, 5)
-        test_main_layout.addWidget(steps_grp, 5)
+        test_main_layout.addLayout(right_layout, 5)
 
         # DRIVER MEMORY
         self.dut_thread = None; self.gen_worker = None; self.sa_worker = None
@@ -678,15 +723,80 @@ class MainWindow(QMainWindow):
         self.update_gen_ui()
         self.load_metadata(None)
 
-    def setup_collapsible(self, btn_toggle, widget):
+    # --- OTONOM TEST YÖNETİM METOTLARI ---
+    def toggle_autonomous_mode(self):
+        self.autonomous_mode = not self.autonomous_mode
+        if self.autonomous_mode:
+            self.btn_auto_mode.setText("OTONOM MOD: ON")
+            self.btn_auto_mode.setStyleSheet(STYLE_GREEN)
+            self.btn_start_autonom.setEnabled(True)
+        else:
+            self.btn_auto_mode.setText("OTONOM MOD: OFF")
+            self.btn_auto_mode.setStyleSheet(STYLE_RED)
+            self.btn_start_autonom.setEnabled(False)
+            
+        self.update_steps_locking()
+
+    def start_autonomous_execution(self):
+        selected = []
+        for w in self.step_widgets:
+            if w.checkbox.isChecked():
+                # Düzeltme: Tamamlananları filtrelemiyoruz, tekrar çalışabilirler
+                selected.append(w.step_index)
+                    
+        if not selected:
+            QMessageBox.information(self, "Bilgi", "Koşulacak bir test adımı seçmediniz.")
+            return
+
+        # --- ARDIŞIK SIRA MANTIĞI DOĞRULAMASI ---
+        existing_step_indexes = sorted([w.step_index for w in self.step_widgets])
+        
+        for step in selected:
+            for required_idx in existing_step_indexes:
+                if required_idx < step:
+                    # Gerekli adım tamamlanmamışsa VE şu anki seçili listede de yoksa HATA!
+                    if required_idx not in self.completed_steps and required_idx not in selected:
+                        QMessageBox.critical(self, "Sıralama Hatası", 
+                            f"Ardışık test kuralı ihlali!\nTest Adımı {step}'i başlatabilmek için öncelikle Test Adımı {required_idx}'in tamamlanması (veya şu an seçili olması) gerekmektedir.")
+                        return
+
+        for idx in selected:
+            for w in self.step_widgets:
+                if w.step_index == idx:
+                    w.checkbox.blockSignals(True)
+                    w.checkbox.setChecked(False)
+                    w.checkbox.blockSignals(False)
+                    break
+                    
+        dialog = AutoTestProgressDialog(selected, self, self)
+        dialog.exec()
+
+    # --- KULLANICI ARAYÜZÜ YARDIMCI FONKSİYONLARI ---
+    def setup_collapsible(self, btn_toggle, widget, default_visible=False):
         def on_toggle():
             is_visible = not widget.isVisible()
             widget.setVisible(is_visible)
             arrow = "▼" if is_visible else "▶"
             btn_toggle.setText(f"{arrow} Ayarları Gizle/Göster")
+            
         btn_toggle.clicked.connect(on_toggle)
-        widget.setVisible(False)
-        btn_toggle.setText("▶ Ayarları Gizle/Göster")
+        widget.setVisible(default_visible)
+        arrow = "▼" if default_visible else "▶"
+        btn_toggle.setText(f"{arrow} Ayarları Gizle/Göster")
+
+    def setup_collapsible_steps(self, btn_toggle, widget, spacer):
+        # Bu fonksiyon zıplama sorununu çözmek için test adımlarına özel yazılmıştır
+        def on_toggle():
+            is_visible = not widget.isVisible()
+            widget.setVisible(is_visible)
+            spacer.setVisible(not is_visible) # Gizliyse boşluk açılır, yukarı iter!
+            arrow = "▼" if is_visible else "▶"
+            btn_toggle.setText(f"{arrow} Adım Listesini Gizle/Göster")
+            
+        btn_toggle.clicked.connect(on_toggle)
+        widget.setVisible(True) # Başlangıçta açık
+        spacer.setVisible(False)
+        btn_toggle.setText("▼ Adım Listesini Gizle/Göster")
 
     def start_test_clicked(self):
         self.tabs.setTabEnabled(1, True)
@@ -869,7 +979,7 @@ class MainWindow(QMainWindow):
         else:
             try:
                 self.sa_driver.apply_settings(c, s, r, rbw)
-                self.debug_log({"source": "ANALYZER", "event": "SETTINGS", "ip_port": self.ip_sa.text(), "msg": f"Ayarlar uygulandı: {c}MHz, {s}MHz span"})
+                self.debug_log({"source": "ANALYZER", "event": "SETTINGS", "ip_port": self.ip_sa.text(), "center": c, "span": s, "ref": r, "rbw": rbw, "msg": f"Ayarlar uygulandı: {c}MHz, {s}MHz span"})
             except Exception as e:
                 self.debug_log({"source": "ERROR", "msg": f"SA Ayar Hatası: {e}"})
 
@@ -922,7 +1032,8 @@ class MainWindow(QMainWindow):
             self.ps_driver.set_output(state)
             port_name = "SIM" if self.chk_sim_ps.isChecked() else self.combo_ports_ps.currentText()
             msg = "Output ON (Güç Açık)" if state else "Output OFF (Güç Kapalı)"
-            self.debug_log({"source": "POWER_SUPPLY", "event": "SET_OUTPUT", "ip_port": port_name, "msg": msg})
+            out_val = "1" if state else "0"
+            self.debug_log({"source": "POWER_SUPPLY", "event": "SET_OUTPUT", "ip_port": port_name, "data_content": out_val, "msg": msg})
         except Exception as e:
             self.debug_log({"source": "ERROR", "msg": f"PS Çıkış Hatası: {e}"})
 
@@ -932,7 +1043,7 @@ class MainWindow(QMainWindow):
         try:
             val = self.ps_driver.get_error()
             port = "SIM" if self.chk_sim_ps.isChecked() else self.combo_ports_ps.currentText()
-            self.debug_log({"source": "POWER_SUPPLY", "event": "INFO", "ip_port": port, "msg": f"Hata Durumu: {val}"})
+            self.debug_log({"source": "POWER_SUPPLY", "event": "ERROR_QUERY", "ip_port": port, "data_content": str(val), "msg": f"Hata Durumu: {val}"})
         except Exception as e:
             self.debug_log({"source": "ERROR", "msg": f"PS Hata Sorgusu: {e}"})
 
@@ -982,6 +1093,7 @@ class MainWindow(QMainWindow):
         self.clear_layout(self.steps_inner_layout)
         self.precondition_checkboxes.clear()
         self.step_widgets.clear()
+        self.completed_steps.clear() 
         self.current_json_data = None
         self.tabs.setTabEnabled(1, False)
         self.tabs.setTabEnabled(2, False)
@@ -1055,27 +1167,32 @@ class MainWindow(QMainWindow):
             self.chk_select_all.setChecked(all_checked)
             self.chk_select_all.blockSignals(False)
 
-        # DEĞİŞTİRİLECEK KISIM: Sadece butonun rengini ve tıklanabilirliğini değiştirir
         if hasattr(self, 'btn_proceed'):
             self.btn_proceed.setEnabled(all_checked)
             self.btn_proceed.setStyleSheet(STYLE_GREEN if all_checked else STYLE_GRAY)
 
     def on_step_toggled(self, step_index, is_checked):
-        list_index = step_index - 1 
-        if not is_checked:
-            for i in range(list_index + 1, len(self.step_widgets)):
-                self.step_widgets[i].checkbox.blockSignals(True)
-                self.step_widgets[i].checkbox.setChecked(False)
-                self.step_widgets[i].checkbox.blockSignals(False)
-        self.update_steps_locking()
+        if not self.autonomous_mode:
+            list_index = step_index - 1 
+            if not is_checked:
+                for i in range(list_index + 1, len(self.step_widgets)):
+                    self.step_widgets[i].checkbox.blockSignals(True)
+                    self.step_widgets[i].checkbox.setChecked(False)
+                    self.step_widgets[i].checkbox.blockSignals(False)
+            self.update_steps_locking()
+            
         self.check_test_completion()
 
     def update_steps_locking(self):
-        for i, step_w in enumerate(self.step_widgets):
-            if i == 0: step_w.set_step_enabled(True) 
-            else:
-                prev_step = self.step_widgets[i-1]
-                step_w.set_step_enabled(prev_step.checkbox.isChecked()) 
+        if self.autonomous_mode:
+            for w in self.step_widgets:
+                w.set_step_enabled(True)
+        else:
+            for i, step_w in enumerate(self.step_widgets):
+                if i == 0: step_w.set_step_enabled(True) 
+                else:
+                    prev_step = self.step_widgets[i-1]
+                    step_w.set_step_enabled(prev_step.checkbox.isChecked()) 
 
     def check_test_completion(self):
         if not self.step_widgets: return
@@ -1252,7 +1369,7 @@ class MainWindow(QMainWindow):
                 for i, line in enumerate(lines):
                     if progress.wasCanceled(): break 
                     parts = line.strip().split('|')
-                    while len(parts) < 20: parts.append("0") # Yeni "RF_OUT" formatına uyumluluk için uzat
+                    while len(parts) < 20: parts.append("0") 
                     writer.writerow(parts)
                     if i % 50 == 0: progress.setValue(i); QApplication.processEvents()
                 progress.setValue(total_lines) 
